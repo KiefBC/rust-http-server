@@ -37,15 +37,15 @@ impl std::fmt::Display for HttpVersion {
 #[derive(Debug, Clone)]
 pub struct HttpRequest {
     pub method: HttpMethod,
-    pub target: String,
+    pub path: String,
     pub version: HttpVersion,
-    pub headers: HashMap<String, String>,
+    pub headers: HashMap<String, String>, // "Content-Type" -> "application/json"
     pub body: Option<String>,
 }
 
 impl std::fmt::Display for HttpRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} {} {}\r\n", self.method, self.target, self.version)?;
+        write!(f, "{} {} {}\r\n", self.method, self.path, self.version)?;
         for (key, value) in &self.headers {
             write!(f, "{}: {}\r\n", key, value)?;
         }
@@ -76,13 +76,11 @@ impl HttpRequest {
             _ => return Err(HttpStatus::MethodNotAllowed),
         };
 
-        let target = request_line[1].to_string();
-        if target.trim().is_empty() {
+        let path = request_line[1].to_string();
+        if path.trim().is_empty() {
             return Err(HttpStatus::BadRequest);
         }
-        if target.len() > 1 {
-            return Err(HttpStatus::NotFound);
-        }
+        println!("{}", path);
 
         let version = match request_line[2] {
             "HTTP/1.1" => HttpVersion::Http1_1,
@@ -102,7 +100,7 @@ impl HttpRequest {
 
         let request = HttpRequest {
             method,
-            target,
+            path,
             version,
             headers,
             body: None,
@@ -130,7 +128,7 @@ mod tests {
         let request = HttpRequest::parse(request_lines).unwrap();
 
         assert_eq!(request.method, HttpMethod::Get);
-        assert_eq!(request.target, "/");
+        assert_eq!(request.path, "/");
         assert_eq!(request.version, HttpVersion::Http1_1);
         assert_eq!(request.headers.get("Host").unwrap(), "localhost");
         assert_eq!(request.headers.get("User-Agent").unwrap(), "curl/7.64.1");
@@ -201,7 +199,7 @@ mod tests {
         let request = HttpRequest::parse(request_lines).unwrap();
 
         assert_eq!(request.method, HttpMethod::Get);
-        assert_eq!(request.target, "/");
+        assert_eq!(request.path, "/");
         assert_eq!(request.version, HttpVersion::Http1_1);
         assert!(request.headers.is_empty());
         assert!(request.body.is_none());
