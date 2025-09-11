@@ -1,6 +1,7 @@
 use crate::http::request::HttpVersion;
 use std::collections::HashMap;
 
+/// Represents an HTTP response
 #[derive(Debug, Clone)]
 pub struct HttpResponse {
     pub version: String,
@@ -9,6 +10,7 @@ pub struct HttpResponse {
     pub body: Option<String>,
 }
 
+/// HTTP response status codes
 #[derive(Debug, Clone, PartialEq)]
 pub enum HttpStatus {
     Ok = 200,
@@ -18,6 +20,7 @@ pub enum HttpStatus {
     MethodNotAllowed = 405,
 }
 
+/// Formats HttpStatus for display
 impl std::fmt::Display for HttpStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -30,6 +33,7 @@ impl std::fmt::Display for HttpStatus {
     }
 }
 
+/// Formats HttpResponse for display
 impl std::fmt::Display for HttpResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} {}\r\n", self.version, self.status.format())?;
@@ -45,10 +49,12 @@ impl std::fmt::Display for HttpResponse {
 }
 
 impl HttpStatus {
+    /// Returns numeric status code
     pub fn code(&self) -> u16 {
         self.clone() as u16
     }
 
+    /// Returns status text
     pub fn text(&self) -> &str {
         match self {
             HttpStatus::Ok => "OK",
@@ -59,16 +65,19 @@ impl HttpStatus {
         }
     }
 
+    /// Formats status code and text
     pub fn format(&self) -> String {
         format!("{} {}", self.code(), self.text())
     }
 }
 
 impl HttpResponse {
+    /// Converts response to bytes for transmission
     pub fn to_bytes(&self) -> Vec<u8> {
         self.to_string().into_bytes()
     }
 
+    /// Creates a new HTTP response
     pub fn new(version: HttpVersion, status: HttpStatus, headers: HashMap<&str, &str>) -> Self {
         let version = version.to_string();
 

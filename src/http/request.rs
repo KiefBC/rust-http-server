@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::http::response::HttpStatus;
 
+/// HTTP request methods
 #[derive(Debug, Clone, PartialEq)]
 pub enum HttpMethod {
     Get,
@@ -10,6 +11,7 @@ pub enum HttpMethod {
     Delete,
 }
 
+/// Formats HttpMethod for display
 impl std::fmt::Display for HttpMethod {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -21,11 +23,13 @@ impl std::fmt::Display for HttpMethod {
     }
 }
 
+/// HTTP protocol versions
 #[derive(Debug, Clone, PartialEq)]
 pub enum HttpVersion {
     Http1_1,
 }
 
+/// Formats HttpVersion for display
 impl std::fmt::Display for HttpVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -34,6 +38,7 @@ impl std::fmt::Display for HttpVersion {
     }
 }
 
+/// Represents an HTTP request
 #[derive(Debug, Clone)]
 pub struct HttpRequest {
     pub method: HttpMethod,
@@ -43,6 +48,7 @@ pub struct HttpRequest {
     pub body: Option<String>,
 }
 
+/// Formats HttpRequest for display
 impl std::fmt::Display for HttpRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} {} {}\r\n", self.method, self.path, self.version)?;
@@ -58,6 +64,7 @@ impl std::fmt::Display for HttpRequest {
 }
 
 impl HttpRequest {
+    /// Parses raw request lines into HttpRequest
     pub fn parse(request: Vec<String>) -> Result<Self, HttpStatus> {
         if request.is_empty() {
             return Err(HttpStatus::BadRequest);

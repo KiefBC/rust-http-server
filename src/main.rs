@@ -2,6 +2,7 @@ use std::net::TcpListener;
 
 mod http;
 
+/// Entry point for the HTTP server
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:4221").unwrap();
 

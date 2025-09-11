@@ -5,21 +5,30 @@ use crate::http::{
     response::{HttpResponse, HttpStatus},
 };
 
+/// Represents a single route
 pub struct Route {
     method: HttpMethod,
     path: String, // /echo/{text}
     handler: fn(request: &HttpRequest, params: &HashMap<String, String>) -> HttpResponse,
 }
 
+/// Manages routes and dispatches requests
 pub struct Router {
     routes: Vec<Route>,
 }
 
 impl Router {
+    /// Creates a new router
     pub fn new() -> Self {
-        Router { routes: Vec::new() }
+        // default routes
+        let mut router = Router { routes: Vec::new() };
+        router.get("/", root_handler);
+        router.get("/echo/{text}", echo_handler);
+
+        router
     }
 
+    /// Registers a GET route
     pub fn get(
         &mut self,
         path: &str,
@@ -34,6 +43,7 @@ impl Router {
         self.routes.push(route);
     }
 
+    /// Finds matching route and executes handler
     pub fn route(&self, request: &HttpRequest) -> HttpResponse {
         for route in &self.routes {
             if route.method == request.method {
@@ -70,13 +80,31 @@ impl Router {
     }
 }
 
-pub fn echo_handler(request: &HttpRequest, params: &HashMap<String, String>) -> HttpResponse {
+/// Handler that handles root path
+pub fn root_handler(_request: &HttpRequest, _params: &HashMap<String, String>) -> HttpResponse {
+    let body = "Welcome to the Rust HTTP Server!".to_string();
+    let headers = HashMap::from([
+        ("Content-Length".to_string(), body.len().to_string()),
+        ("Content-Type".to_string(), "text/plain".to_string()),
+        ("Connection".to_string(), "Close".to_string()),
+    ]);
+
+    HttpResponse {
+        version: HttpVersion::Http1_1.to_string(),
+        status: HttpStatus::Ok,
+        headers,
+        body: Some(body),
+    }
+}
+
+/// Handler that echoes text parameter
+pub fn echo_handler(_request: &HttpRequest, params: &HashMap<String, String>) -> HttpResponse {
     let text = params.get("text").map(|s| s.as_str()).unwrap_or("");
     let body = text.to_string();
     let headers = HashMap::from([
         ("Content-Length".to_string(), body.len().to_string()),
-        ("Connection".to_string(), "Close".to_string()),
         ("Content-Type".to_string(), "text/plain".to_string()),
+        ("Connection".to_string(), "Close".to_string()),
     ]);
 
     HttpResponse {
