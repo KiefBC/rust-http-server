@@ -63,7 +63,9 @@ impl fmt::Display for HttpRequest {
             "{} {} {}\r\n",
             self.status_line.method, self.status_line.path, self.status_line.version
         )?;
-        for (key, value) in &self.headers {
+        let mut headers: Vec<_> = self.headers.iter().collect();
+        headers.sort_by_key(|(key, _)| *key);
+        for (key, value) in headers {
             write!(f, "{}: {}\r\n", key, value)?;
         }
         write!(f, "\r\n")?;
@@ -95,9 +97,6 @@ impl HttpRequest {
         };
 
         let path = request_line[1].to_string();
-
-        // TODO: Remove soon?
-        println!("{}", path);
 
         let version = match request_line[2] {
             "HTTP/1.1" => HttpVersion::Http1_1,

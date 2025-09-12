@@ -1,10 +1,9 @@
-use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::net::TcpStream;
 
-use crate::http::request::{HttpRequest, HttpVersion};
-use crate::http::response::HttpResponse;
+use crate::http::request::HttpRequest;
 use crate::http::routes::Router;
+use crate::http::writer::HttpWriter;
 
 /// Handles incoming client connections
 pub fn handle_client(mut stream: TcpStream) {
@@ -29,21 +28,15 @@ pub fn handle_client(mut stream: TcpStream) {
     match HttpRequest::parse(request_lines) {
         Ok(request) => {
             let router = Router::new();
-            let response = router.route(&request);
-            if let Err(e) = stream.write_all(&response.to_bytes()) {
-                println!("error writing response: {}", e);
-            }
+            router.route(&request, &mut stream);
         }
         Err(status) => {
             println!("error parsing request: {:#?}", status);
 
-            let response = HttpResponse::new(
-                HttpVersion::Http1_1,
-                status,
-                HashMap::from([("Content-Length", "0"), ("Connection", "close")]),
-            );
-            if let Err(e) = stream.write_all(&response.to_bytes()) {
-                println!("error writing response: {}", e);
+            let body = format!("Error: {}\n", status);
+
+            if let Err(e) = HttpWriter::error_response(&mut stream, status, body) {
+                HttpWriter::log_writer_error(e, "server_error_response");
             }
         }
     }

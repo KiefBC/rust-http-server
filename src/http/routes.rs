@@ -1,15 +1,16 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, net::TcpStream};
 
 use crate::http::{
-    request::{HttpMethod, HttpRequest, HttpVersion},
-    response::{HttpResponse, HttpStatusCode, StatusLine},
+    request::{HttpMethod, HttpRequest},
+    response::HttpStatusCode,
+    writer::HttpWriter,
 };
 
 /// Represents a single route
 pub struct Route {
     method: HttpMethod,
     path: String, // /echo/{text}
-    handler: fn(request: &HttpRequest, params: &HashMap<String, String>) -> HttpResponse,
+    handler: fn(request: &HttpRequest, params: &HashMap<String, String>, stream: &mut TcpStream),
 }
 
 /// Manages routes and dispatches requests
@@ -32,7 +33,7 @@ impl Router {
     pub fn get(
         &mut self,
         path: &str,
-        handler: fn(&HttpRequest, &HashMap<String, String>) -> HttpResponse,
+        handler: fn(&HttpRequest, &HashMap<String, String>, &mut TcpStream),
     ) {
         let route = Route {
             method: HttpMethod::Get,
@@ -46,7 +47,7 @@ impl Router {
     /// Finds matching route and executes handler
     /// TODO: We might need to consider changing the "{text}" parsing to be isolated from this
     /// route() since its only for /echo/{text} for now
-    pub fn route(&self, request: &HttpRequest) -> HttpResponse {
+    pub fn route(&self, request: &HttpRequest, stream: &mut TcpStream) {
         for route in &self.routes {
             if route.method == request.status_line.method {
                 let route_path = route.path.split('/').collect::<Vec<&str>>();
@@ -67,64 +68,43 @@ impl Router {
                     }
 
                     if is_match {
-                        return (route.handler)(request, &params);
+                        return (route.handler)(request, &params, stream);
                     }
                 }
             }
         }
 
-        let status_line = StatusLine {
-            version: HttpVersion::Http1_1.to_string(),
-            status: HttpStatusCode::NotFound,
-        };
+        let body = "404 Not Found".to_string();
 
-        HttpResponse {
-            status_line,
-            headers: HashMap::new(),
-            body: Some("404 Not Found".to_string()),
+        if let Err(e) = HttpWriter::error_response(stream, HttpStatusCode::NotFound, body) {
+            HttpWriter::log_writer_error(e, "router_404");
         }
     }
 }
 
 /// Handler that handles root path
-pub fn root_handler(_request: &HttpRequest, _params: &HashMap<String, String>) -> HttpResponse {
+pub fn root_handler(
+    _request: &HttpRequest,
+    _params: &HashMap<String, String>,
+    stream: &mut TcpStream,
+) {
     let body = "Welcome to the Rust HTTP Server!".to_string();
-    let headers = HashMap::from([
-        ("Content-Length".to_string(), body.len().to_string()),
-        ("Content-Type".to_string(), "text/plain".to_string()),
-        ("Connection".to_string(), "Close".to_string()),
-    ]);
 
-    let status_line = StatusLine {
-        version: HttpVersion::Http1_1.to_string(),
-        status: HttpStatusCode::Ok,
-    };
-
-    HttpResponse {
-        status_line,
-        headers,
-        body: Some(body),
+    if let Err(e) = HttpWriter::ok_response(stream, body) {
+        HttpWriter::log_writer_error(e, "root_handler");
     }
 }
 
 /// Handler that echoes text parameter
-pub fn echo_handler(_request: &HttpRequest, params: &HashMap<String, String>) -> HttpResponse {
+pub fn echo_handler(
+    _request: &HttpRequest,
+    params: &HashMap<String, String>,
+    stream: &mut TcpStream,
+) {
     let text = params.get("text").map(|s| s.as_str()).unwrap_or("");
     let body = text.to_string();
-    let headers = HashMap::from([
-        ("Content-Length".to_string(), body.len().to_string()),
-        ("Content-Type".to_string(), "text/plain".to_string()),
-        ("Connection".to_string(), "Close".to_string()),
-    ]);
 
-    let status_line = StatusLine {
-        version: HttpVersion::Http1_1.to_string(),
-        status: HttpStatusCode::Ok,
-    };
-
-    HttpResponse {
-        status_line,
-        headers,
-        body: Some(body),
+    if let Err(e) = HttpWriter::ok_response(stream, body) {
+        HttpWriter::log_writer_error(e, "echo_handler");
     }
 }

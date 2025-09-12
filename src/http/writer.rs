@@ -1,15 +1,9 @@
-#![allow(dead_code)]
-#![allow(unused_imports)]
-// TODO: Remove these imports for dead code
 use std::collections::HashMap;
 use std::io::Write;
 use std::net::TcpStream;
-use titlecase::{titlecase, Titlecase};
+use titlecase::Titlecase;
 
-use crate::http::{
-    request::{HttpRequest, HttpVersion},
-    response::{HttpResponse, HttpStatusCode},
-};
+use crate::http::{request::HttpVersion, response::HttpStatusCode};
 
 #[derive(Debug, Clone, PartialEq)]
 enum WriterState {
@@ -18,7 +12,6 @@ enum WriterState {
     HeadersOpen,   // Can write/replace headers
     HeadersClosed, // Headers done, can only write body
     BodyWritten,   // Body written, can only complete
-    Complete,      // Successfully completed
     Failed,        // Error occurred, no operations allowed
 }
 
@@ -29,7 +22,6 @@ pub enum WriterError {
     MissingHeader(String),
     InvalidHeader(String),
     ContentLengthMismatch { declared: usize, actual: usize },
-    FailedState(String),
 }
 
 impl From<std::io::Error> for WriterError {
@@ -38,6 +30,7 @@ impl From<std::io::Error> for WriterError {
     }
 }
 
+/// Represents an HTTP response writer
 pub struct HttpWriter<'a> {
     stream: &'a mut TcpStream,
     state: WriterState,
@@ -123,6 +116,7 @@ impl<'a> HttpWriter<'a> {
         Ok(())
     }
 
+    /// Completes the HTTP response write, ensuring all parts are valid and written
     pub fn complete_write(self) -> Result<(), WriterError> {
         if self.state != WriterState::BodyWritten && self.state != WriterState::HeadersClosed {
             return Err(WriterError::InvalidState(
@@ -178,5 +172,67 @@ impl<'a> HttpWriter<'a> {
                 "Content-Length header is required".to_string(),
             ))
         }
+    }
+
+    /// write convenience methods for common responses
+    pub fn ok_response(stream: &mut TcpStream, body: String) -> Result<(), WriterError> {
+        let mut writer = HttpWriter::new(stream);
+
+        writer.write_status_line(HttpVersion::Http1_1, HttpStatusCode::Ok)?;
+        writer.write_header("Content-Length".to_string(), body.len().to_string())?;
+        writer.write_header("Content-Type".to_string(), "text/plain".to_string())?;
+        writer.write_header("Connection".to_string(), "close".to_string())?;
+        writer.finish_headers()?;
+        writer.write_body(body)?;
+        writer.complete_write()?;
+
+        Ok(())
+    }
+
+    /// Logs WriterError with specific context for each error variant
+    pub fn log_writer_error(error: WriterError, context: &str) {
+        match error {
+            WriterError::InvalidState(msg) => {
+                eprintln!("[{}] State machine violation: {}", context, msg);
+            }
+            WriterError::ContentLengthMismatch { declared, actual } => {
+                eprintln!("[{}] Content-Length mismatch! Declared: {}, Actual: {} - Response will be malformed!", 
+                    context, declared, actual);
+            }
+            WriterError::MissingHeader(header) => {
+                eprintln!("[{}] Required header missing: {}", context, header);
+            }
+            WriterError::IoError(io_err) => {
+                eprintln!(
+                    "[{}] Network/IO error: {} - Connection may be broken",
+                    context, io_err
+                );
+            }
+            WriterError::InvalidHeader(msg) => {
+                eprintln!("[{}] Invalid header format: {}", context, msg);
+            }
+            WriterError::FailedState(msg) => {
+                eprintln!("[{}] Writer in failed state (unusable): {}", context, msg);
+            }
+        }
+    }
+
+    /// write convenience method for error responses
+    pub fn error_response(
+        stream: &mut TcpStream,
+        status: HttpStatusCode,
+        body: String,
+    ) -> Result<(), WriterError> {
+        let mut writer = HttpWriter::new(stream);
+
+        writer.write_status_line(HttpVersion::Http1_1, status)?;
+        writer.write_header("Content-Length".to_string(), body.len().to_string())?;
+        writer.write_header("Content-Type".to_string(), "text/plain".to_string())?;
+        writer.write_header("Connection".to_string(), "close".to_string())?;
+        writer.finish_headers()?;
+        writer.write_body(body)?;
+        writer.complete_write()?;
+
+        Ok(())
     }
 }
