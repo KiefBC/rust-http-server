@@ -1,18 +1,19 @@
 use crate::http::request::HttpVersion;
 use std::collections::HashMap;
+use std::fmt;
 
 /// Represents an HTTP response
 #[derive(Debug, Clone)]
 pub struct HttpResponse {
-    pub version: String,
-    pub status: HttpStatus,
+    pub status_line: StatusLine,
     pub headers: HashMap<String, String>,
     pub body: Option<String>,
+    // TODO: Trailers eventually
 }
 
 /// HTTP response status codes
 #[derive(Debug, Clone, PartialEq)]
-pub enum HttpStatus {
+pub enum HttpStatusCode {
     Ok = 200,
     NotFound = 404,
     InternalServerError = 500,
@@ -20,23 +21,35 @@ pub enum HttpStatus {
     MethodNotAllowed = 405,
 }
 
+/// Status line of an HTTP response
+#[derive(Debug, Clone)]
+pub struct StatusLine {
+    pub version: String,
+    pub status: HttpStatusCode,
+}
+
 /// Formats HttpStatus for display
-impl std::fmt::Display for HttpStatus {
+impl fmt::Display for HttpStatusCode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            HttpStatus::Ok => write!(f, "Ok"),
-            HttpStatus::NotFound => write!(f, "Not Found"),
-            HttpStatus::InternalServerError => write!(f, "Internal Server Error"),
-            HttpStatus::BadRequest => write!(f, "Bad Request"),
-            HttpStatus::MethodNotAllowed => write!(f, "Method Not Allowed"),
+            HttpStatusCode::Ok => write!(f, "Ok"),
+            HttpStatusCode::NotFound => write!(f, "Not Found"),
+            HttpStatusCode::InternalServerError => write!(f, "Internal Server Error"),
+            HttpStatusCode::BadRequest => write!(f, "Bad Request"),
+            HttpStatusCode::MethodNotAllowed => write!(f, "Method Not Allowed"),
         }
     }
 }
 
 /// Formats HttpResponse for display
-impl std::fmt::Display for HttpResponse {
+impl fmt::Display for HttpResponse {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} {}\r\n", self.version, self.status.format())?;
+        write!(
+            f,
+            "{} {}\r\n",
+            self.status_line.version,
+            self.status_line.status.format()
+        )?;
         for (key, value) in &self.headers {
             write!(f, "{}: {}\r\n", key, value)?;
         }
@@ -48,7 +61,7 @@ impl std::fmt::Display for HttpResponse {
     }
 }
 
-impl HttpStatus {
+impl HttpStatusCode {
     /// Returns numeric status code
     pub fn code(&self) -> u16 {
         self.clone() as u16
@@ -57,11 +70,11 @@ impl HttpStatus {
     /// Returns status text
     pub fn text(&self) -> &str {
         match self {
-            HttpStatus::Ok => "OK",
-            HttpStatus::NotFound => "Not Found",
-            HttpStatus::InternalServerError => "Internal Server Error",
-            HttpStatus::BadRequest => "Bad Request",
-            HttpStatus::MethodNotAllowed => "Method Not Allowed",
+            HttpStatusCode::Ok => "OK",
+            HttpStatusCode::NotFound => "Not Found",
+            HttpStatusCode::InternalServerError => "Internal Server Error",
+            HttpStatusCode::BadRequest => "Bad Request",
+            HttpStatusCode::MethodNotAllowed => "Method Not Allowed",
         }
     }
 
@@ -78,7 +91,7 @@ impl HttpResponse {
     }
 
     /// Creates a new HTTP response
-    pub fn new(version: HttpVersion, status: HttpStatus, headers: HashMap<&str, &str>) -> Self {
+    pub fn new(version: HttpVersion, status: HttpStatusCode, headers: HashMap<&str, &str>) -> Self {
         let version = version.to_string();
 
         let mut header_map = HashMap::new();
@@ -86,9 +99,13 @@ impl HttpResponse {
             header_map.insert(key.to_string(), value.to_string());
         }
 
+        let status_line = StatusLine {
+            version: version.clone(),
+            status: status.clone(),
+        };
+
         HttpResponse {
-            version,
-            status,
+            status_line,
             headers: header_map,
             body: None,
         }

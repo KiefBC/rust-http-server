@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::http::{
     request::{HttpMethod, HttpRequest, HttpVersion},
-    response::{HttpResponse, HttpStatus},
+    response::{HttpResponse, HttpStatusCode, StatusLine},
 };
 
 /// Represents a single route
@@ -44,11 +44,13 @@ impl Router {
     }
 
     /// Finds matching route and executes handler
+    /// TODO: We might need to consider changing the "{text}" parsing to be isolated from this
+    /// route() since its only for /echo/{text} for now
     pub fn route(&self, request: &HttpRequest) -> HttpResponse {
         for route in &self.routes {
-            if route.method == request.method {
+            if route.method == request.status_line.method {
                 let route_path = route.path.split('/').collect::<Vec<&str>>();
-                let request_path = request.path.split('/').collect::<Vec<&str>>();
+                let request_path = request.status_line.path.split('/').collect::<Vec<&str>>();
 
                 if route_path.len() == request_path.len() {
                     let mut params: HashMap<String, String> = HashMap::new();
@@ -71,9 +73,13 @@ impl Router {
             }
         }
 
-        HttpResponse {
+        let status_line = StatusLine {
             version: HttpVersion::Http1_1.to_string(),
-            status: HttpStatus::NotFound,
+            status: HttpStatusCode::NotFound,
+        };
+
+        HttpResponse {
+            status_line,
             headers: HashMap::new(),
             body: Some("404 Not Found".to_string()),
         }
@@ -89,9 +95,13 @@ pub fn root_handler(_request: &HttpRequest, _params: &HashMap<String, String>) -
         ("Connection".to_string(), "Close".to_string()),
     ]);
 
-    HttpResponse {
+    let status_line = StatusLine {
         version: HttpVersion::Http1_1.to_string(),
-        status: HttpStatus::Ok,
+        status: HttpStatusCode::Ok,
+    };
+
+    HttpResponse {
+        status_line,
         headers,
         body: Some(body),
     }
@@ -107,9 +117,13 @@ pub fn echo_handler(_request: &HttpRequest, params: &HashMap<String, String>) ->
         ("Connection".to_string(), "Close".to_string()),
     ]);
 
-    HttpResponse {
+    let status_line = StatusLine {
         version: HttpVersion::Http1_1.to_string(),
-        status: HttpStatus::Ok,
+        status: HttpStatusCode::Ok,
+    };
+
+    HttpResponse {
+        status_line,
         headers,
         body: Some(body),
     }

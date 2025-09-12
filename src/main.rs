@@ -9,11 +9,9 @@ fn main() {
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                println!(
-                    "\naccepted new connection from {}\n",
-                    stream.peer_addr().unwrap()
-                );
+                println!("\nAccepted Connection: {}", stream.peer_addr().unwrap());
                 http::server::handle_client(stream);
+                println!("Connection Closed, bye!");
             }
             Err(e) => {
                 println!("error: {}", e);

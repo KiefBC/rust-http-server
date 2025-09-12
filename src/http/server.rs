@@ -3,8 +3,8 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 
 use crate::http::request::{HttpRequest, HttpVersion};
-use crate::http::response::{HttpResponse, HttpStatus};
-use crate::http::routes::{echo_handler, Route, Router};
+use crate::http::response::HttpResponse;
+use crate::http::routes::Router;
 
 /// Handles incoming client connections
 pub fn handle_client(mut stream: TcpStream) {
@@ -28,9 +28,7 @@ pub fn handle_client(mut stream: TcpStream) {
 
     match HttpRequest::parse(request_lines) {
         Ok(request) => {
-            let mut router = Router::new();
-            router.get("/echo/{text}", echo_handler);
-
+            let router = Router::new();
             let response = router.route(&request);
             if let Err(e) = stream.write_all(&response.to_bytes()) {
                 println!("error writing response: {}", e);

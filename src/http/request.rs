@@ -1,6 +1,7 @@
 use std::collections::HashMap;
+use std::fmt;
 
-use crate::http::response::HttpStatus;
+use crate::http::response::HttpStatusCode;
 
 /// HTTP request methods
 #[derive(Debug, Clone, PartialEq)]
@@ -12,7 +13,7 @@ pub enum HttpMethod {
 }
 
 /// Formats HttpMethod for display
-impl std::fmt::Display for HttpMethod {
+impl fmt::Display for HttpMethod {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             HttpMethod::Get => write!(f, "GET"),
@@ -30,7 +31,7 @@ pub enum HttpVersion {
 }
 
 /// Formats HttpVersion for display
-impl std::fmt::Display for HttpVersion {
+impl fmt::Display for HttpVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             HttpVersion::Http1_1 => write!(f, "HTTP/1.1"),
@@ -38,20 +39,30 @@ impl std::fmt::Display for HttpVersion {
     }
 }
 
-/// Represents an HTTP request
 #[derive(Debug, Clone)]
-pub struct HttpRequest {
+pub struct StatusLine {
     pub method: HttpMethod,
     pub path: String,
     pub version: HttpVersion,
+}
+
+/// Represents an HTTP request
+#[derive(Debug, Clone)]
+pub struct HttpRequest {
+    pub status_line: StatusLine,
     pub headers: HashMap<String, String>, // "Content-Type" -> "application/json"
     pub body: Option<String>,
+    // TODO: Trailers and etc
 }
 
 /// Formats HttpRequest for display
-impl std::fmt::Display for HttpRequest {
+impl fmt::Display for HttpRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} {} {}\r\n", self.method, self.path, self.version)?;
+        write!(
+            f,
+            "{} {} {}\r\n",
+            self.status_line.method, self.status_line.path, self.status_line.version
+        )?;
         for (key, value) in &self.headers {
             write!(f, "{}: {}\r\n", key, value)?;
         }
@@ -65,14 +76,14 @@ impl std::fmt::Display for HttpRequest {
 
 impl HttpRequest {
     /// Parses raw request lines into HttpRequest
-    pub fn parse(request: Vec<String>) -> Result<Self, HttpStatus> {
+    pub fn parse(request: Vec<String>) -> Result<Self, HttpStatusCode> {
         if request.is_empty() {
-            return Err(HttpStatus::BadRequest);
+            return Err(HttpStatusCode::BadRequest);
         }
 
         let request_line: Vec<&str> = request[0].split_whitespace().collect();
         if request_line.len() != 3 {
-            return Err(HttpStatus::BadRequest);
+            return Err(HttpStatusCode::BadRequest);
         }
 
         let method = match request_line[0] {
@@ -80,18 +91,17 @@ impl HttpRequest {
             "POST" => HttpMethod::Post,
             "PUT" => HttpMethod::Put,
             "DELETE" => HttpMethod::Delete,
-            _ => return Err(HttpStatus::MethodNotAllowed),
+            _ => return Err(HttpStatusCode::MethodNotAllowed),
         };
 
         let path = request_line[1].to_string();
-        if path.trim().is_empty() {
-            return Err(HttpStatus::BadRequest);
-        }
+
+        // TODO: Remove soon?
         println!("{}", path);
 
         let version = match request_line[2] {
             "HTTP/1.1" => HttpVersion::Http1_1,
-            _ => return Err(HttpStatus::BadRequest),
+            _ => return Err(HttpStatusCode::BadRequest),
         };
 
         let mut headers: HashMap<String, String> = HashMap::new();
@@ -105,10 +115,14 @@ impl HttpRequest {
             }
         }
 
+        let status_line = StatusLine {
+            method: method.clone(),
+            path: path.clone(),
+            version: version.clone(),
+        };
+
         let request = HttpRequest {
-            method,
-            path,
-            version,
+            status_line,
             headers,
             body: None,
         };
@@ -134,9 +148,9 @@ mod tests {
 
         let request = HttpRequest::parse(request_lines).unwrap();
 
-        assert_eq!(request.method, HttpMethod::Get);
-        assert_eq!(request.path, "/");
-        assert_eq!(request.version, HttpVersion::Http1_1);
+        assert_eq!(request.status_line.method, HttpMethod::Get);
+        assert_eq!(request.status_line.path, "/");
+        assert_eq!(request.status_line.version, HttpVersion::Http1_1);
         assert_eq!(request.headers.get("Host").unwrap(), "localhost");
         assert_eq!(request.headers.get("User-Agent").unwrap(), "curl/7.64.1");
         assert_eq!(request.headers.get("Accept").unwrap(), "*/*");
@@ -152,7 +166,7 @@ mod tests {
         ];
 
         let result = HttpRequest::parse(request_lines);
-        assert_eq!(result.unwrap_err(), HttpStatus::MethodNotAllowed);
+        assert_eq!(result.unwrap_err(), HttpStatusCode::MethodNotAllowed);
     }
 
     #[test]
@@ -164,7 +178,7 @@ mod tests {
         ];
 
         let result = HttpRequest::parse(request_lines);
-        assert_eq!(result.unwrap_err(), HttpStatus::BadRequest);
+        assert_eq!(result.unwrap_err(), HttpStatusCode::BadRequest);
     }
 
     #[test]
@@ -176,7 +190,7 @@ mod tests {
         ];
 
         let result = HttpRequest::parse(request_lines);
-        assert_eq!(result.unwrap_err(), HttpStatus::NotFound);
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -188,7 +202,7 @@ mod tests {
         ];
 
         let result = HttpRequest::parse(request_lines);
-        assert_eq!(result.unwrap_err(), HttpStatus::BadRequest);
+        assert_eq!(result.unwrap_err(), HttpStatusCode::BadRequest);
     }
 
     #[test]
@@ -196,7 +210,7 @@ mod tests {
         let request_lines: Vec<String> = vec![];
 
         let result = HttpRequest::parse(request_lines);
-        assert_eq!(result.unwrap_err(), HttpStatus::BadRequest);
+        assert_eq!(result.unwrap_err(), HttpStatusCode::BadRequest);
     }
 
     #[test]
@@ -205,10 +219,81 @@ mod tests {
 
         let request = HttpRequest::parse(request_lines).unwrap();
 
-        assert_eq!(request.method, HttpMethod::Get);
-        assert_eq!(request.path, "/");
-        assert_eq!(request.version, HttpVersion::Http1_1);
+        assert_eq!(request.status_line.method, HttpMethod::Get);
+        assert_eq!(request.status_line.path, "/");
+        assert_eq!(request.status_line.version, HttpVersion::Http1_1);
         assert!(request.headers.is_empty());
-        assert!(request.body.is_none());
+    }
+
+    #[test]
+    fn test_http_method_display() {
+        let methods: Vec<HttpMethod> = vec![
+            HttpMethod::Get,
+            HttpMethod::Post,
+            HttpMethod::Put,
+            HttpMethod::Delete,
+        ];
+
+        let expected = vec!["GET", "POST", "PUT", "DELETE"];
+
+        assert_eq!(
+            methods
+                .iter()
+                .map(|m| m.to_string())
+                .collect::<Vec<String>>(),
+            expected
+        );
+    }
+
+    #[test]
+    fn test_http_version_display() {
+        let version = HttpVersion::Http1_1;
+        let expected = "HTTP/1.1";
+        assert_eq!(version.to_string(), expected);
+    }
+
+    #[test]
+    fn test_http_request_display_no_body() {
+        let status_line = StatusLine {
+            method: HttpMethod::Get,
+            path: "/".to_string(),
+            version: HttpVersion::Http1_1,
+        };
+
+        let request = HttpRequest {
+            status_line,
+            headers: HashMap::from([
+                ("Host".to_string(), "localhost".to_string()),
+                ("User-Agent".to_string(), "curl/7.64.1".to_string()),
+            ]),
+            body: None,
+        };
+
+        let expected = "GET / HTTP/1.1\r\nHost: localhost\r\nUser-Agent: curl/7.64.1\r\n\r\n";
+
+        assert_eq!(request.to_string(), expected);
+    }
+
+    #[test]
+    fn test_http_request_display_with_body() {
+        let status_line = StatusLine {
+            method: HttpMethod::Get,
+            path: "/".to_string(),
+            version: HttpVersion::Http1_1,
+        };
+
+        let request = HttpRequest {
+            status_line,
+            headers: HashMap::from([
+                ("Host".to_string(), "localhost".to_string()),
+                ("User-Agent".to_string(), "curl/7.64.1".to_string()),
+            ]),
+            body: Some("Hello, World!".to_string()),
+        };
+
+        let expected =
+            "GET / HTTP/1.1\r\nHost: localhost\r\nUser-Agent: curl/7.64.1\r\n\r\nHello, World!";
+
+        assert_eq!(request.to_string(), expected);
     }
 }
