@@ -25,6 +25,7 @@ impl Router {
         let mut router = Router { routes: Vec::new() };
         router.get("/", root_handler);
         router.get("/echo/{text}", echo_handler);
+        router.get("/user-agent", user_agent_handler);
 
         router
     }
@@ -106,5 +107,22 @@ pub fn echo_handler(
 
     if let Err(e) = HttpWriter::ok_response(stream, body) {
         HttpWriter::log_writer_error(e, "echo_handler");
+    }
+}
+
+pub fn user_agent_handler(
+    request: &HttpRequest,
+    _params: &HashMap<String, String>,
+    stream: &mut TcpStream,
+) {
+    let user_agent = request
+        .headers
+        .get("User-Agent")
+        .map(|s| s.as_str())
+        .unwrap_or("Unknown");
+    let body = user_agent.to_string();
+
+    if let Err(e) = HttpWriter::ok_response(stream, body) {
+        HttpWriter::log_writer_error(e, "user_agent_handler");
     }
 }
