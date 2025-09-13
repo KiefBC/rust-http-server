@@ -211,9 +211,6 @@ impl<'a> HttpWriter<'a> {
             WriterError::InvalidHeader(msg) => {
                 eprintln!("[{}] Invalid header format: {}", context, msg);
             }
-            WriterError::FailedState(msg) => {
-                eprintln!("[{}] Writer in failed state (unusable): {}", context, msg);
-            }
         }
     }
 
