@@ -1,9 +1,10 @@
 use std::io::{BufRead, BufReader};
 use std::net::TcpStream;
 
+use crate::http::errors;
 use crate::http::request::HttpRequest;
 use crate::http::routes::Router;
-use crate::http::writer::HttpWriter;
+use crate::http::writer::send_response;
 
 /// Handles incoming client connections
 pub fn handle_client(mut stream: TcpStream) {
@@ -30,14 +31,15 @@ pub fn handle_client(mut stream: TcpStream) {
             let router = Router::new();
             router.route(&request, &mut stream);
         }
-        Err(status) => {
-            println!("error parsing request: {:#?}", status);
-
-            let body = format!("Error: {}\n", status);
-
-            if let Err(e) = HttpWriter::error_response(&mut stream, status, body) {
-                HttpWriter::log_writer_error(e, "server_error_response");
-            }
+        Err(parse_error) => {
+            let error_response = errors::HttpErrorResponse::new(
+                parse_error.status,
+                parse_error.headers.get("Accept").map(|s| s.as_str()),
+                "Parsing failed".to_string(),
+            );
+            send_response(&mut stream, error_response).unwrap_or_else(|e| {
+                println!("Failed to send error response: {:?}", e);
+            });
         }
     }
 }

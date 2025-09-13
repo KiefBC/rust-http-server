@@ -110,6 +110,7 @@ pub fn echo_handler(
     }
 }
 
+/// Handler that returns User-Agent header
 pub fn user_agent_handler(
     request: &HttpRequest,
     _params: &HashMap<String, String>,

@@ -3,7 +3,15 @@ use std::io::Write;
 use std::net::TcpStream;
 use titlecase::Titlecase;
 
-use crate::http::{request::HttpVersion, response::HttpStatusCode};
+use crate::http::request::HttpVersion;
+use crate::http::{response::HttpStatusCode, response::StatusLine};
+
+/// Writable HTTP entity trait
+pub trait HttpWritable {
+    fn status_line(&self) -> &StatusLine;
+    fn headers(&self) -> &HashMap<String, String>;
+    fn body(&self) -> &Option<String>;
+}
 
 #[derive(Debug, Clone, PartialEq)]
 enum WriterState {
@@ -232,4 +240,24 @@ impl<'a> HttpWriter<'a> {
 
         Ok(())
     }
+}
+
+pub fn send_response<T: HttpWritable>(
+    stream: &mut TcpStream,
+    response: T,
+) -> Result<(), WriterError> {
+    let mut writer = HttpWriter::new(stream);
+
+    writer.write_status_line(
+        response.status_line().version.clone(),
+        response.status_line().status.clone(),
+    )?;
+    for (key, value) in response.headers() {
+        writer.write_header(key.to_string(), value.to_string())?;
+    }
+    writer.finish_headers()?;
+    writer.write_body(response.body().clone().unwrap_or_default())?;
+    writer.complete_write()?;
+
+    Ok(())
 }

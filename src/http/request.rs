@@ -3,7 +3,20 @@ use std::fmt;
 
 use crate::http::response::HttpStatusCode;
 
-/// HTTP request methods
+/// Represents an error that occurred while parsing an HTTP request
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParseError {
+    pub status: HttpStatusCode,
+    pub headers: HashMap<String, String>,
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ParseError: {}", self.status)
+    }
+}
+
+/// Represents HTTP methods
 #[derive(Debug, Clone, PartialEq)]
 pub enum HttpMethod {
     Get,
@@ -30,6 +43,15 @@ pub enum HttpVersion {
     Http1_1,
 }
 
+impl HttpVersion {
+    pub fn get_version(version_str: &str) -> HttpVersion {
+        match version_str {
+            "HTTP/1.1" => HttpVersion::Http1_1,
+            _ => HttpVersion::Http1_1, // Default to HTTP/1.1 for now
+        }
+    }
+}
+
 /// Formats HttpVersion for display
 impl fmt::Display for HttpVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -39,6 +61,7 @@ impl fmt::Display for HttpVersion {
     }
 }
 
+/// Represents the status line of an HTTP request
 #[derive(Debug, Clone)]
 pub struct StatusLine {
     pub method: HttpMethod,
@@ -78,31 +101,16 @@ impl fmt::Display for HttpRequest {
 
 impl HttpRequest {
     /// Parses raw request lines into HttpRequest
-    pub fn parse(request: Vec<String>) -> Result<Self, HttpStatusCode> {
+    pub fn parse(request: Vec<String>) -> Result<Self, ParseError> {
+        // we expect at least a request line
         if request.is_empty() {
-            return Err(HttpStatusCode::BadRequest);
+            return Err(ParseError {
+                status: HttpStatusCode::BadRequest,
+                headers: HashMap::new(),
+            });
         }
 
-        let request_line: Vec<&str> = request[0].split_whitespace().collect();
-        if request_line.len() != 3 {
-            return Err(HttpStatusCode::BadRequest);
-        }
-
-        let method = match request_line[0] {
-            "GET" => HttpMethod::Get,
-            "POST" => HttpMethod::Post,
-            "PUT" => HttpMethod::Put,
-            "DELETE" => HttpMethod::Delete,
-            _ => return Err(HttpStatusCode::MethodNotAllowed),
-        };
-
-        let path = request_line[1].to_string();
-
-        let version = match request_line[2] {
-            "HTTP/1.1" => HttpVersion::Http1_1,
-            _ => return Err(HttpStatusCode::BadRequest),
-        };
-
+        // parse headers first so we can return them in case of error
         let mut headers: HashMap<String, String> = HashMap::new();
         for line in &request[1..] {
             if line.is_empty() {
@@ -113,6 +121,39 @@ impl HttpRequest {
                 headers.insert(key.to_string(), value.to_string());
             }
         }
+
+        let request_line: Vec<&str> = request[0].split_whitespace().collect();
+        if request_line.len() != 3 {
+            return Err(ParseError {
+                status: HttpStatusCode::BadRequest,
+                headers,
+            });
+        }
+
+        let method = match request_line[0] {
+            "GET" => HttpMethod::Get,
+            "POST" => HttpMethod::Post,
+            "PUT" => HttpMethod::Put,
+            "DELETE" => HttpMethod::Delete,
+            _ => {
+                return Err(ParseError {
+                    status: HttpStatusCode::MethodNotAllowed,
+                    headers,
+                })
+            }
+        };
+
+        let path = request_line[1].to_string();
+
+        let version = match request_line[2] {
+            "HTTP/1.1" => HttpVersion::Http1_1,
+            _ => {
+                return Err(ParseError {
+                    status: HttpStatusCode::BadRequest,
+                    headers,
+                })
+            }
+        };
 
         let status_line = StatusLine {
             method: method.clone(),
@@ -165,7 +206,13 @@ mod tests {
         ];
 
         let result = HttpRequest::parse(request_lines);
-        assert_eq!(result.unwrap_err(), HttpStatusCode::MethodNotAllowed);
+        assert_eq!(
+            result.unwrap_err(),
+            ParseError {
+                status: HttpStatusCode::MethodNotAllowed,
+                headers: HashMap::new(),
+            }
+        );
     }
 
     #[test]
@@ -177,7 +224,13 @@ mod tests {
         ];
 
         let result = HttpRequest::parse(request_lines);
-        assert_eq!(result.unwrap_err(), HttpStatusCode::BadRequest);
+        assert_eq!(
+            result.unwrap_err(),
+            ParseError {
+                status: HttpStatusCode::BadRequest,
+                headers: HashMap::new(),
+            }
+        );
     }
 
     #[test]
@@ -201,7 +254,13 @@ mod tests {
         ];
 
         let result = HttpRequest::parse(request_lines);
-        assert_eq!(result.unwrap_err(), HttpStatusCode::BadRequest);
+        assert_eq!(
+            result.unwrap_err(),
+            ParseError {
+                status: HttpStatusCode::BadRequest,
+                headers: HashMap::new(),
+            }
+        );
     }
 
     #[test]
@@ -209,7 +268,13 @@ mod tests {
         let request_lines: Vec<String> = vec![];
 
         let result = HttpRequest::parse(request_lines);
-        assert_eq!(result.unwrap_err(), HttpStatusCode::BadRequest);
+        assert_eq!(
+            result.unwrap_err(),
+            ParseError {
+                status: HttpStatusCode::BadRequest,
+                headers: HashMap::new(),
+            }
+        );
     }
 
     #[test]
