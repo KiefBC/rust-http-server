@@ -1,4 +1,4 @@
-use crate::http::{request, response, writer::HttpWritable};
+use crate::http::{request, response, routes::ContentNegotiable, writer::HttpWritable};
 use std::collections::HashMap;
 
 /// Represents an HTTP error response
@@ -9,15 +9,39 @@ pub struct HttpErrorResponse {
     // TODO: Potentially trailers
 }
 
+impl ContentNegotiable for HttpErrorResponse {
+    /// Returns an error response for a given file with content negotiation
+    fn for_file(
+        status: response::HttpStatusCode,
+        _filename: &str,
+        content: String,
+    ) -> HttpErrorResponse {
+        // For simplicity, we ignore filename-based negotiation here
+        HttpErrorResponse::new(status, None, content)
+    }
+
+    /// Returns an error response with content negotiation based on Accept header
+    fn with_negotiation(
+        status_code: response::HttpStatusCode,
+        content: String,
+        accept_header: Option<&str>,
+    ) -> HttpErrorResponse {
+        HttpErrorResponse::new(status_code, accept_header, content)
+    }
+}
+
 impl HttpWritable for HttpErrorResponse {
+    /// Returns the status line of the error response
     fn status_line(&self) -> &response::StatusLine {
         &self.status_line
     }
 
+    /// Returns the headers of the error response
     fn headers(&self) -> &HashMap<String, String> {
         &self.headers
     }
 
+    /// Returns the body of the error response
     fn body(&self) -> &Option<String> {
         &self.body
     }
@@ -49,6 +73,7 @@ impl HttpErrorResponse {
                 message, status_code as u16
             )),
             response::HttpContentType::PlainText => Some(message.clone()),
+            response::HttpContentType::OctetStream => None, // No body for octet-stream
         };
 
         let headers = HashMap::from([
