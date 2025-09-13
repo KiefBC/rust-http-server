@@ -1,4 +1,5 @@
-use std::net::TcpListener;
+use crate::http::server;
+use std::{net::TcpListener, thread};
 
 mod http;
 
@@ -10,7 +11,7 @@ fn main() {
         match stream {
             Ok(stream) => {
                 println!("\nAccepted Connection: {}", stream.peer_addr().unwrap());
-                http::server::handle_client(stream);
+                thread::spawn(|| server::handle_client(stream));
                 println!("Connection Closed, bye!");
             }
             Err(e) => {
