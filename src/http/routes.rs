@@ -44,8 +44,29 @@ impl Router {
         router.get("/echo/{text}", echo_handler);
         router.get("/user-agent", user_agent_handler);
         router.get("/files/{filename}", file_handler);
+        router.post("/files/{filename}", file_handler);
 
         router
+    }
+
+    /// Registers a POST route
+    pub fn post(
+        &mut self,
+        path: &str,
+        handler: fn(
+            &HttpRequest,
+            &HashMap<String, String>,
+            &mut TcpStream,
+            ctx: &server::ServerContext,
+        ),
+    ) {
+        let route = Route {
+            method: HttpMethod::Post,
+            path: path.to_string(),
+            handler,
+        };
+
+        self.routes.push(route);
     }
 
     /// Registers a GET route
@@ -151,29 +172,69 @@ pub fn echo_handler(
 
 /// Handler that returns content of a file
 pub fn file_handler(
-    _request: &HttpRequest,
+    request: &HttpRequest,
     params: &HashMap<String, String>,
     stream: &mut TcpStream,
     ctx: &server::ServerContext,
 ) {
     let filename = params.get("filename").map(|s| s.as_str()).unwrap_or("");
-    let file_path = ctx.get_serving_directory();
-    let abs_path = file_path.join(filename);
-    if let Ok(content) = fs::read_to_string(abs_path) {
-        let response = HttpResponse::for_file(HttpStatusCode::Ok, filename, content);
+    let file_path = ctx.get_serving_directory().join(filename);
 
-        send_response(stream, response).unwrap_or_else(|e| {
-            HttpWriter::log_writer_error(e, "file_handler - sending file content");
-        });
-    } else {
-        let err_response = HttpErrorResponse::for_file(
-            HttpStatusCode::NotFound,
-            filename,
-            format!("File '{}' not found", filename),
-        );
-        send_response(stream, err_response).unwrap_or_else(|e| {
-            HttpWriter::log_writer_error(e, "file_handler - sending 404 response");
-        });
+    match request.status_line.method {
+        HttpMethod::Get => {
+            if let Ok(content) = fs::read_to_string(file_path) {
+                let response = HttpResponse::for_file(HttpStatusCode::Ok, filename, content);
+
+                send_response(stream, response).unwrap_or_else(|e| {
+                    HttpWriter::log_writer_error(e, "file_handler - sending file content");
+                });
+            } else {
+                let err_response = HttpErrorResponse::for_file(
+                    HttpStatusCode::NotFound,
+                    filename,
+                    format!("File '{}' not found", filename), // Create error message
+                );
+                send_response(stream, err_response).unwrap_or_else(|e| {
+                    HttpWriter::log_writer_error(e, "file_handler - sending 404 response");
+                });
+            }
+        }
+        HttpMethod::Post => {
+            let content = request.body.as_ref().map_or("", |b| b.as_str());
+            match fs::write(&file_path, content) {
+                Ok(_) => {
+                    let response = HttpResponse::for_file(
+                        HttpStatusCode::Created,
+                        filename,
+                        format!("File '{}' created/updated", filename),
+                    );
+
+                    send_response(stream, response).unwrap_or_else(|e| {
+                        HttpWriter::log_writer_error(e, "file_handler - sending 200 response");
+                    });
+                }
+                Err(e) => {
+                    let err_response = HttpErrorResponse::for_file(
+                        HttpStatusCode::InternalServerError,
+                        filename,
+                        format!("Failed to write file '{}': {}", filename, e),
+                    );
+                    send_response(stream, err_response).unwrap_or_else(|e| {
+                        HttpWriter::log_writer_error(e, "file_handler - sending 500 response");
+                    });
+                }
+            }
+        }
+        _ => {
+            let err_response = HttpErrorResponse::new(
+                HttpStatusCode::MethodNotAllowed,
+                None,
+                "Method not allowed".to_string(),
+            );
+            send_response(stream, err_response).unwrap_or_else(|e| {
+                HttpWriter::log_writer_error(e, "file_handler - sending 405 response");
+            });
+        }
     }
 }
 

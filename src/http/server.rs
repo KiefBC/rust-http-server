@@ -1,6 +1,8 @@
-use std::io::{BufRead, BufReader};
-use std::net::TcpStream;
-use std::path;
+use std::{
+    io::Read,
+    net::{Shutdown, TcpStream},
+    path,
+};
 
 use crate::http::{errors, request, routes, writer};
 
@@ -54,25 +56,27 @@ impl ServerContext {
 
 /// Handles incoming client connections
 pub fn handle_client(mut stream: TcpStream, ctx: ServerContext) {
-    let mut request_lines: Vec<String> = Vec::new();
+    let mut request_bytes: Vec<u8> = Vec::new();
+    let mut buffer = [0; 1024];
 
-    let reader = BufReader::new(&stream);
-    for line_result in reader.lines() {
-        match line_result {
-            Ok(line) => {
-                if line.is_empty() {
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(0) => break, // Connection closed
+            Ok(n) => {
+                request_bytes.extend_from_slice(&buffer[..n]);
+                // Check if we have a complete HTTP request (ending with \r\n\r\n)
+                if request_bytes.windows(4).any(|window| window == b"\r\n\r\n") {
                     break;
                 }
-                request_lines.push(line);
             }
             Err(e) => {
-                println!("error reading line: {}", e);
-                break;
+                println!("Failed to read from stream: {}", e);
+                return;
             }
         }
     }
 
-    match request::HttpRequest::parse(request_lines) {
+    match request::HttpRequest::parse(&request_bytes) {
         Ok(parse_ok) => {
             let router = routes::Router::new();
             router.route(&parse_ok, &mut stream, &ctx);
@@ -88,4 +92,9 @@ pub fn handle_client(mut stream: TcpStream, ctx: ServerContext) {
             });
         }
     }
+
+    // Graceful shutdown - signal we're done writing but let client finish reading
+    stream.shutdown(Shutdown::Write).unwrap_or_else(|e| {
+        println!("Warning: Failed to shutdown stream gracefully: {}", e);
+    });
 }

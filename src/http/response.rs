@@ -166,9 +166,12 @@ impl fmt::Display for HttpContentType {
 #[derive(Debug, Clone, PartialEq)]
 pub enum HttpStatusCode {
     Ok = 200,
+    Created = 201,
+    NoContent = 204,
     NotFound = 404,
     BadRequest = 400,
     MethodNotAllowed = 405,
+    InternalServerError = 500,
 }
 
 /// Formats HttpStatus for display
@@ -179,6 +182,10 @@ impl fmt::Display for HttpStatusCode {
             HttpStatusCode::NotFound => write!(f, "404 Not Found"),
             HttpStatusCode::BadRequest => write!(f, "400 Bad Request"),
             HttpStatusCode::MethodNotAllowed => write!(f, "405 Method Not Allowed"),
+            HttpStatusCode::Created => write!(f, "201 Created"),
+            HttpStatusCode::NoContent => write!(f, "204 No Content"),
+            HttpStatusCode::InternalServerError => write!(f, "500 Internal Server Error"),
+            _ => write!(f, "520 Unknown Error"), // Fallback
         }
     }
 }

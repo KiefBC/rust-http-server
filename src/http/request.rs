@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use std::collections::HashMap;
 use std::fmt;
 
@@ -102,7 +101,7 @@ impl fmt::Display for HttpRequest {
 
 impl HttpRequest {
     /// Parses raw request lines into HttpRequest
-    pub fn parse(request: Vec<String>) -> Result<Self, ParseError> {
+    pub fn parse(request: &[u8]) -> Result<Self, ParseError> {
         // we expect at least a request line
         if request.is_empty() {
             return Err(ParseError {
@@ -111,19 +110,37 @@ impl HttpRequest {
             });
         }
 
+        let boundary = Self::find_boundary(request).ok_or(ParseError {
+            status: HttpStatusCode::BadRequest,
+            headers: HashMap::new(),
+        })?;
+
+        let (header_bytes, body_bytes) = request.split_at(boundary);
+        let body_bytes = &body_bytes[4..]; // skip the \r\n\r\n
+
         // parse headers first so we can return them in case of error
         let mut headers: HashMap<String, String> = HashMap::new();
-        for line in &request[1..] {
+        let header_lines = Self::bytes_to_lines(header_bytes);
+        for line in &header_lines[1..] {
             if line.is_empty() {
-                break;
+                continue; // Skip empty lines
             }
-
-            if let Some((key, value)) = line.split_once(": ") {
-                headers.insert(key.to_string(), value.to_string());
+            if let Some((key, value)) = line.split_once(':') {
+                headers.insert(key.trim().to_string(), value.trim().to_string());
+            } else {
+                return Err(ParseError {
+                    status: HttpStatusCode::BadRequest,
+                    headers,
+                });
             }
         }
 
-        let request_line: Vec<&str> = request[0].split_whitespace().collect();
+        let mut body = "".to_string();
+        if body_bytes.len() > 0 {
+            body = Self::bytes_to_lines(body_bytes).join("\n");
+        }
+
+        let request_line: Vec<&str> = header_lines[0].split_whitespace().collect();
         if request_line.len() != 3 {
             return Err(ParseError {
                 status: HttpStatusCode::BadRequest,
@@ -162,13 +179,37 @@ impl HttpRequest {
             version: version.clone(),
         };
 
+        let content_length = headers
+            .get("Content-Length")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(0);
+
         let request = HttpRequest {
             status_line,
             headers,
-            body: None,
+            body: if content_length > 0 { Some(body) } else { None },
         };
 
         Ok(request)
+    }
+
+    /// Locates the boundary between headers and body in raw HTTP request bytes
+    fn find_boundary(bytes: &[u8]) -> Option<usize> {
+        // Look for [13, 10, 13, 10] which is \r\n\r\n
+        for i in 0..bytes.len() - 3 {
+            if bytes[i..i + 4] == [13, 10, 13, 10] {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    /// Returns lines from raw bytes
+    fn bytes_to_lines(bytes: &[u8]) -> Vec<String> {
+        String::from_utf8_lossy(bytes)
+            .lines()
+            .map(|line| line.to_string())
+            .collect()
     }
 }
 
@@ -179,15 +220,10 @@ mod tests {
     #[test]
     /// Testing: GET /index.html HTTP/1.1\r\nHost: localhost:4221\r\nUser-Agent: curl/7.64.1\r\nAccept: */*\r\n\r\n
     fn test_parse_valid_request() {
-        let request_lines = vec![
-            "GET / HTTP/1.1".to_string(),
-            "Host: localhost".to_string(),
-            "User-Agent: curl/7.64.1".to_string(),
-            "Accept: */*".to_string(),
-            "".to_string(),
-        ];
+        let request_bytes =
+            b"GET / HTTP/1.1\r\nHost: localhost\r\nUser-Agent: curl/7.64.1\r\nAccept: */*\r\n\r\n";
 
-        let request = HttpRequest::parse(request_lines).unwrap();
+        let request = HttpRequest::parse(request_bytes).unwrap();
 
         assert_eq!(request.status_line.method, HttpMethod::Get);
         assert_eq!(request.status_line.path, "/");
@@ -200,75 +236,59 @@ mod tests {
 
     #[test]
     fn test_parse_invalid_method() {
-        let request_lines = vec![
-            "FETCH / HTTP/1.1".to_string(),
-            "Host: localhost".to_string(),
-            "".to_string(),
-        ];
+        let request_bytes = b"FETCH / HTTP/1.1\r\nHost: localhost\r\n\r\n";
 
-        let result = HttpRequest::parse(request_lines);
+        let result = HttpRequest::parse(request_bytes);
         assert_eq!(
             result.unwrap_err(),
             ParseError {
                 status: HttpStatusCode::MethodNotAllowed,
-                headers: HashMap::new(),
+                headers: HashMap::from([("Host".to_string(), "localhost".to_string())]),
             }
         );
     }
 
     #[test]
     fn test_parse_invalid_version() {
-        let request_lines = vec![
-            "GET / HTTP/2.0".to_string(),
-            "Host: localhost".to_string(),
-            "".to_string(),
-        ];
+        let request_bytes = b"GET / HTTP/2.0\r\nHost: localhost\r\n\r\n";
 
-        let result = HttpRequest::parse(request_lines);
+        let result = HttpRequest::parse(request_bytes);
         assert_eq!(
             result.unwrap_err(),
             ParseError {
                 status: HttpStatusCode::BadRequest,
-                headers: HashMap::new(),
+                headers: HashMap::from([("Host".to_string(), "localhost".to_string())]),
             }
         );
     }
 
     #[test]
     fn test_parse_invalid_target() {
-        let request_lines = vec![
-            "GET /noexist HTTP/1.1".to_string(),
-            "Host: localhost".to_string(),
-            "".to_string(),
-        ];
+        let request_bytes = b"GET /noexist HTTP/1.1\r\nHost: localhost\r\n\r\n";
 
-        let result = HttpRequest::parse(request_lines);
+        let result = HttpRequest::parse(request_bytes);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_parse_malformed_request_line() {
-        let request_lines = vec![
-            "GET /".to_string(),
-            "Host: localhost".to_string(),
-            "".to_string(),
-        ];
+        let request_bytes = b"GET /\r\nHost: localhost\r\n\r\n";
 
-        let result = HttpRequest::parse(request_lines);
+        let result = HttpRequest::parse(request_bytes);
         assert_eq!(
             result.unwrap_err(),
             ParseError {
                 status: HttpStatusCode::BadRequest,
-                headers: HashMap::new(),
+                headers: HashMap::from([("Host".to_string(), "localhost".to_string())]),
             }
         );
     }
 
     #[test]
     fn test_parse_empty_request() {
-        let request_lines: Vec<String> = vec![];
+        let request_bytes = b"";
 
-        let result = HttpRequest::parse(request_lines);
+        let result = HttpRequest::parse(request_bytes);
         assert_eq!(
             result.unwrap_err(),
             ParseError {
@@ -280,9 +300,9 @@ mod tests {
 
     #[test]
     fn test_parse_request_with_no_headers() {
-        let request_lines = vec!["GET / HTTP/1.1".to_string(), "".to_string()];
+        let request_bytes = b"GET / HTTP/1.1\r\n\r\n";
 
-        let request = HttpRequest::parse(request_lines).unwrap();
+        let request = HttpRequest::parse(request_bytes).unwrap();
 
         assert_eq!(request.status_line.method, HttpMethod::Get);
         assert_eq!(request.status_line.path, "/");
