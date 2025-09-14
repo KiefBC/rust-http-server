@@ -19,21 +19,29 @@ impl ContentNegotiable for HttpErrorResponse {
     fn for_file(
         status: response::HttpStatusCode,
         version: request::HttpVersion,
+        connection_header: &str,
         _filename: &str,
         content: String,
     ) -> HttpErrorResponse {
         // For simplicity, we ignore filename-based negotiation here
-        HttpErrorResponse::new(status, version, None, content)
+        HttpErrorResponse::new(status, version, connection_header, None, content)
     }
 
     /// Returns an error response with content negotiation based on Accept header
     fn with_negotiation(
         status_code: response::HttpStatusCode,
         version: request::HttpVersion,
+        connection_header: &str,
         content: String,
         accept_header: Option<&str>,
     ) -> HttpErrorResponse {
-        HttpErrorResponse::new(status_code, version, accept_header, content)
+        HttpErrorResponse::new(
+            status_code,
+            version,
+            connection_header,
+            accept_header,
+            content,
+        )
     }
 }
 
@@ -59,6 +67,7 @@ impl HttpErrorResponse {
     pub fn new(
         status_code: response::HttpStatusCode,
         version: HttpVersion,
+        connection_header: &str,
         accept_header: Option<&str>,
         message: String,
     ) -> HttpErrorResponse {

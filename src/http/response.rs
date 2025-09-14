@@ -12,6 +12,7 @@ impl ContentNegotiable for HttpResponse {
     fn for_file(
         status: HttpStatusCode,
         version: HttpVersion,
+        connection_header: &str,
         filename: &str,
         content: String,
     ) -> Self {
@@ -40,6 +41,7 @@ impl ContentNegotiable for HttpResponse {
     fn with_negotiation(
         status_code: HttpStatusCode,
         version: HttpVersion,
+        connection_header: &str,
         content: String,
         accept_header: Option<&str>,
     ) -> Self {
@@ -66,7 +68,9 @@ impl ContentNegotiable for HttpResponse {
                 body.as_ref()
                     .map_or("0".to_string(), |b| b.len().to_string()),
             ),
-            if version == HttpVersion::Http1_1 {
+            if connection_header.eq_ignore_ascii_case("close") {
+                ("Connection".to_string(), "close".to_string())
+            } else if version == HttpVersion::Http1_1 {
                 ("Connection".to_string(), "keep-alive".to_string())
             } else {
                 ("Connection".to_string(), "close".to_string())

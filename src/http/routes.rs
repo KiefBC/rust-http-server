@@ -85,12 +85,14 @@ pub trait ContentNegotiable {
     fn for_file(
         status: HttpStatusCode,
         version: HttpVersion,
+        connection_header: &str,
         filename: &str,
         content: String,
     ) -> Self;
     fn with_negotiation(
         status_code: HttpStatusCode,
         version: HttpVersion,
+        connection_header: &str,
         content: String,
         accept_header: Option<&str>,
     ) -> Self;
@@ -293,6 +295,7 @@ impl Router {
         let err_response = HttpErrorResponse::new(
             HttpStatusCode::NotFound,
             request.status_line.version.clone(),
+            request.headers.get("Connection").map_or("", |s| s.as_str()),
             accept_header,
             "Route not found".to_string(),
         );
@@ -314,6 +317,7 @@ pub fn root_handler(
     let response = HttpResponse::with_negotiation(
         HttpStatusCode::Ok,
         request.status_line.version.clone(),
+        request.headers.get("Connection").map_or("", |s| s.as_str()),
         body,
         accept_type,
     );
@@ -339,6 +343,7 @@ pub fn echo_handler(
     let response = HttpResponse::with_negotiation(
         HttpStatusCode::Ok,
         request.status_line.version.clone(),
+        request.headers.get("Connection").map_or("", |s| s.as_str()),
         body,
         accept_type,
     );
@@ -366,6 +371,7 @@ pub fn file_handler(
                 let response = HttpResponse::for_file(
                     HttpStatusCode::Ok,
                     request.status_line.version.clone(),
+                    request.headers.get("Connection").map_or("", |s| s.as_str()),
                     filename,
                     content,
                 );
@@ -377,6 +383,7 @@ pub fn file_handler(
                 let err_response = HttpErrorResponse::for_file(
                     HttpStatusCode::NotFound,
                     request.status_line.version.clone(),
+                    request.headers.get("Connection").map_or("", |s| s.as_str()),
                     filename,
                     format!("File '{}' not found", filename), // Create error message
                 );
@@ -392,6 +399,7 @@ pub fn file_handler(
                     let response = HttpResponse::for_file(
                         HttpStatusCode::Created,
                         request.status_line.version.clone(),
+                        request.headers.get("Connection").map_or("", |s| s.as_str()),
                         filename,
                         format!("File '{}' created/updated", filename),
                     );
@@ -404,6 +412,7 @@ pub fn file_handler(
                     let err_response = HttpErrorResponse::for_file(
                         HttpStatusCode::InternalServerError,
                         request.status_line.version.clone(),
+                        request.headers.get("Connection").map_or("", |s| s.as_str()),
                         filename,
                         format!("Failed to write file '{}': {}", filename, e),
                     );
@@ -417,6 +426,7 @@ pub fn file_handler(
             let err_response = HttpErrorResponse::new(
                 HttpStatusCode::MethodNotAllowed,
                 request.status_line.version.clone(),
+                request.headers.get("Connection").map_or("", |s| s.as_str()),
                 None,
                 "Method not allowed".to_string(),
             );
@@ -444,6 +454,7 @@ pub fn user_agent_handler(
     let response = HttpResponse::with_negotiation(
         HttpStatusCode::Ok,
         request.status_line.version.clone(),
+        request.headers.get("Connection").map_or("", |s| s.as_str()),
         body,
         accept_type,
     );

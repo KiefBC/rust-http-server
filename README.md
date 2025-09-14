@@ -7,8 +7,8 @@ Project based on: [CodeCrafters HTTP Protocol Server](https://app.codecrafters.i
 ## Features
 
 - Concurrent client connections
-- Persistent HTTP connections (keep-alive)
-- HTTP/1.0 and HTTP/1.1 version support
+- Persistent HTTP connections (keep-alive) with bidirectional negotiation
+- HTTP/1.0 and HTTP/1.1 version support with proper defaults
 - HTTP compression (gzip, deflate, brotli) with quality-based negotiation
 - Content negotiation (JSON, HTML, plain text)
 - File serving with read/write operations

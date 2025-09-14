@@ -97,6 +97,11 @@ pub fn handle_client(mut stream: TcpStream, ctx: ServerContext) {
                 let error_response = errors::HttpErrorResponse::new(
                     parse_error.status,
                     parse_error.version,
+                    parse_error
+                        .headers
+                        .get("Connection")
+                        .map(|s| s.as_str())
+                        .unwrap_or("close"),
                     parse_error.headers.get("Accept").map(|s| s.as_str()),
                     "Parsing failed".to_string(),
                 );
