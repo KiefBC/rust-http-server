@@ -2,6 +2,10 @@
 
 A high-performance HTTP server implementation with compression, content negotiation, and file operations.
 
+<div align="center">
+  <img src="Server_Stats.png" alt="Server Performance Stats" width="600">
+</div>
+
 Project based on: [CodeCrafters HTTP Protocol Server](https://app.codecrafters.io/courses/http-server/overview)
 
 ## Features
