@@ -8,6 +8,76 @@ use crate::http::{
     writer::{send_response, HttpBody, HttpWritable, HttpWriter},
 };
 
+/// Represents supported HTTP Encoding types
+pub enum HttpEncoding {
+    Gzip,
+    Deflate,
+    Brotli,
+}
+
+impl std::fmt::Display for HttpEncoding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let encoding_str = match self {
+            HttpEncoding::Gzip => "gzip",
+            HttpEncoding::Deflate => "deflate",
+            HttpEncoding::Brotli => "brotli",
+        };
+        write!(f, "{}", encoding_str)
+    }
+}
+
+impl HttpEncoding {
+    pub fn from_encoding_string(s: &str) -> Option<HttpEncoding> {
+        match s.to_lowercase().as_str() {
+            "gzip" => Some(HttpEncoding::Gzip),
+            "deflate" => Some(HttpEncoding::Deflate),
+            "br" | "brotli" => Some(HttpEncoding::Brotli),
+            _ => None,
+        }
+    }
+
+    pub fn parse_accept_encoding(header: &str) -> Vec<(HttpEncoding, f32)> {
+        // "gzip;q=0.8, deflate;q=0.9, br;q=1.0" -> ["gzip;q=0.8", "deflate;q=0.9", "br;q=1.0"]
+        let comma_split = header.split(',').map(str::trim);
+
+        // ["gzip;q=0.8", "deflate;q=0.9", "br;q=1.0"] -> ["gzip", "q=0.8"], ["deflate", "q=0.9"]..
+        let semicolon_split =
+            comma_split.map(|s| s.split(';').map(str::trim).collect::<Vec<&str>>());
+
+        // "q=0.8" -> "0.8" or "1.0" if not present
+        let quality_split = semicolon_split.map(|parts| {
+            if parts.is_empty() || parts[0].is_empty() {
+                return ("", 0.0);
+            }
+
+            let encoding_name = parts[0];
+
+            // if q is present, parse it, else default to 1.0
+            let q_value = if parts.len() > 1 && parts[1].starts_with("q=") {
+                // (gzip, q=0.8) -> 0.8
+                parts[1][2..].parse::<f32>().unwrap_or(1.0)
+            } else {
+                1.0
+            };
+
+            (encoding_name, q_value)
+        });
+
+        let mut sorted_quality: Vec<(&str, f32)> =
+            quality_split.filter(|(_, q)| *q > 0.0).collect();
+        sorted_quality.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+        let mut encodings: Vec<(HttpEncoding, f32)> = Vec::new();
+        for (enc_str, q) in sorted_quality {
+            if let Some(enc) = HttpEncoding::from_encoding_string(enc_str) {
+                encodings.push((enc, q));
+            }
+        }
+
+        encodings
+    }
+}
+
 /// Supports content negotiation for responses
 pub trait ContentNegotiable {
     fn for_file(status: HttpStatusCode, filename: &str, content: String) -> Self;
@@ -21,20 +91,24 @@ pub trait ContentNegotiable {
 pub struct CompressionMiddleware;
 
 impl CompressionMiddleware {
+    // Applies compression based on Accept-Encoding header
     pub fn apply<T: HttpWritable>(
         response: T,
         accept_encoding: Option<&str>,
     ) -> CompressedResponse<T> {
-        let encoding = if let Some(encodings) = accept_encoding {
-            if encodings.contains("gzip") {
-                "gzip"
-            } else if encodings.contains("deflate") {
-                "deflate"
+        let encoding = if let Some(header) = accept_encoding {
+            let encoding_type = HttpEncoding::parse_accept_encoding(header);
+            if !encoding_type.is_empty() {
+                match encoding_type[0].0 {
+                    HttpEncoding::Gzip => "gzip",
+                    HttpEncoding::Deflate => "deflate",
+                    HttpEncoding::Brotli => "br",
+                }
             } else {
-                "identity"
+                "identity" // no acceptable encoding found
             }
         } else {
-            "identity"
+            "identity" // no Accept-Encoding header, no compression
         };
 
         let body = match response.body() {
@@ -52,6 +126,11 @@ impl CompressionMiddleware {
                 let mut encoder = libflate::deflate::Encoder::new(Vec::new());
                 std::io::copy(&mut &body[..], &mut encoder).unwrap();
                 encoder.finish().into_result().unwrap()
+            }
+            "br" | "brotli" => {
+                let mut encoder = brotli::CompressorWriter::new(Vec::new(), 4096, 5, 22);
+                std::io::copy(&mut &body[..], &mut encoder).unwrap();
+                encoder.into_inner()
             }
             _ => body, // identity, no compression
         };
