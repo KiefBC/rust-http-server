@@ -54,7 +54,7 @@ impl fmt::Display for HttpVersion {
 
 /// Represents the status line of an HTTP request
 #[derive(Debug, Clone)]
-pub struct StatusLine {
+pub struct RequestStatusLine {
     pub method: HttpMethod,
     pub path: String,
     pub version: HttpVersion,
@@ -63,7 +63,7 @@ pub struct StatusLine {
 /// Represents an HTTP request
 #[derive(Debug, Clone)]
 pub struct HttpRequest {
-    pub status_line: StatusLine,
+    pub status_line: RequestStatusLine,
     pub headers: HashMap<String, String>, // "Content-Type" -> "application/json"
     pub body: Option<String>,
     // TODO: Trailers and etc
@@ -164,7 +164,7 @@ impl HttpRequest {
             }
         };
 
-        let status_line = StatusLine {
+        let status_line = RequestStatusLine {
             method: method.clone(),
             path: path.clone(),
             version: version.clone(),
@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn test_http_request_display_no_body() {
-        let status_line = StatusLine {
+        let status_line = RequestStatusLine {
             method: HttpMethod::Get,
             path: "/".to_string(),
             version: HttpVersion::Http1_1,
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn test_http_request_display_with_body() {
-        let status_line = StatusLine {
+        let status_line = RequestStatusLine {
             method: HttpMethod::Get,
             path: "/".to_string(),
             version: HttpVersion::Http1_1,

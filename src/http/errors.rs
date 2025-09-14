@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 /// Represents an HTTP error response
 pub struct HttpErrorResponse {
-    pub status_line: response::StatusLine,
+    pub status_line: response::ResponseStatusLine,
     pub headers: HashMap<String, String>,
     pub body: Option<String>,
     // TODO: Potentially trailers
@@ -36,7 +36,7 @@ impl ContentNegotiable for HttpErrorResponse {
 
 impl HttpWritable for HttpErrorResponse {
     /// Returns the status line of the error response
-    fn status_line(&self) -> &response::StatusLine {
+    fn status_line(&self) -> &response::ResponseStatusLine {
         &self.status_line
     }
 
@@ -58,7 +58,7 @@ impl HttpErrorResponse {
         accept_header: Option<&str>,
         message: String,
     ) -> HttpErrorResponse {
-        let status_line = response::StatusLine {
+        let status_line = response::ResponseStatusLine {
             version: request::HttpVersion::Http1_1,
             status: status_code.clone(),
         };

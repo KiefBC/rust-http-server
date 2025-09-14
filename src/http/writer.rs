@@ -4,8 +4,9 @@ use std::net::TcpStream;
 use titlecase::Titlecase;
 
 use crate::http::request::HttpVersion;
-use crate::http::{response::HttpStatusCode, response::StatusLine};
+use crate::http::{response::HttpStatusCode, response::ResponseStatusLine};
 
+// Represents the body of an HTTP response, either as text or binary
 pub enum HttpBody {
     Text(String),
     Binary(Vec<u8>),
@@ -13,7 +14,7 @@ pub enum HttpBody {
 
 /// Writable HTTP entity trait
 pub trait HttpWritable {
-    fn status_line(&self) -> &StatusLine;
+    fn status_line(&self) -> &ResponseStatusLine;
     fn headers(&self) -> HashMap<String, String>;
     fn body(&self) -> HttpBody;
 }

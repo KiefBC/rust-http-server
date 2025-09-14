@@ -17,7 +17,7 @@ impl ContentNegotiable for HttpResponse {
             _ => "application/octet-stream", // Default for unknown files
         };
 
-        let status_line = StatusLine {
+        let status_line = ResponseStatusLine {
             version: HttpVersion::Http1_1,
             status: status.clone(),
         };
@@ -64,7 +64,7 @@ impl ContentNegotiable for HttpResponse {
             ("Connection".to_string(), "close".to_string()),
         ]);
 
-        let status_line = StatusLine {
+        let status_line = ResponseStatusLine {
             version: HttpVersion::Http1_1,
             status: status_code.clone(),
         };
@@ -76,14 +76,14 @@ impl ContentNegotiable for HttpResponse {
 /// Represents an HTTP response
 #[derive(Debug, Clone)]
 pub struct HttpResponse {
-    pub status_line: StatusLine,
+    pub status_line: ResponseStatusLine,
     pub headers: HashMap<String, String>,
     pub body: Option<String>,
     // TODO: Trailers eventually
 }
 
 impl HttpWritable for HttpResponse {
-    fn status_line(&self) -> &StatusLine {
+    fn status_line(&self) -> &ResponseStatusLine {
         &self.status_line
     }
 
@@ -118,7 +118,7 @@ impl fmt::Display for HttpResponse {
 impl HttpResponse {
     /// Creates a new HttpResponse
     pub fn new(
-        status_line: StatusLine,
+        status_line: ResponseStatusLine,
         headers: HashMap<String, String>,
         body: Option<String>,
     ) -> Self {
@@ -191,13 +191,12 @@ impl fmt::Display for HttpStatusCode {
 
 /// Status line of an HTTP response
 #[derive(Debug, Clone)]
-// TODO: DRY! Reuse from request.rs instead
-pub struct StatusLine {
+pub struct ResponseStatusLine {
     pub version: HttpVersion,
     pub status: HttpStatusCode,
 }
 
-impl StatusLine {
+impl ResponseStatusLine {
     /// Returns the path of the status line
     pub fn get_path(&self) -> &HttpStatusCode {
         &self.status

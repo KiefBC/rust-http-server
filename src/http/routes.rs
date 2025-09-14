@@ -3,7 +3,7 @@ use std::{collections::HashMap, fs, net::TcpStream};
 use crate::http::{
     errors::HttpErrorResponse,
     request::{HttpMethod, HttpRequest},
-    response::{HttpResponse, HttpStatusCode},
+    response::{HttpResponse, HttpStatusCode, ResponseStatusLine},
     server,
     writer::{send_response, HttpBody, HttpWritable, HttpWriter},
 };
@@ -27,6 +27,7 @@ impl std::fmt::Display for HttpEncoding {
 }
 
 impl HttpEncoding {
+    // Translates string to HttpEncoding enum
     pub fn from_encoding_string(s: &str) -> Option<HttpEncoding> {
         match s.to_lowercase().as_str() {
             "gzip" => Some(HttpEncoding::Gzip),
@@ -36,6 +37,7 @@ impl HttpEncoding {
         }
     }
 
+    // Parses Accept-Encoding header and returns sorted encodings with quality values
     pub fn parse_accept_encoding(header: &str) -> Vec<(HttpEncoding, f32)> {
         // "gzip;q=0.8, deflate;q=0.9, br;q=1.0" -> ["gzip;q=0.8", "deflate;q=0.9", "br;q=1.0"]
         let comma_split = header.split(',').map(str::trim);
@@ -150,10 +152,12 @@ pub struct CompressedResponse<T: HttpWritable> {
 }
 
 impl<T: HttpWritable> HttpWritable for CompressedResponse<T> {
-    fn status_line(&self) -> &crate::http::response::StatusLine {
+    // Returns original status line
+    fn status_line(&self) -> &ResponseStatusLine {
         self.original.status_line()
     }
 
+    // Returns modified headers with Content-Encoding and updated Content-Length
     fn headers(&self) -> HashMap<String, String> {
         let mut headers = self.original.headers().clone();
         headers.remove("Content-Length");
@@ -169,6 +173,7 @@ impl<T: HttpWritable> HttpWritable for CompressedResponse<T> {
         headers
     }
 
+    // Returns compressed body
     fn body(&self) -> HttpBody {
         HttpBody::Binary(self.compressed_body.clone())
     }
