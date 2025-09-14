@@ -2,7 +2,7 @@ use std::{collections::HashMap, fs, net::TcpStream};
 
 use crate::http::{
     errors::HttpErrorResponse,
-    request::{HttpMethod, HttpRequest},
+    request::{HttpMethod, HttpRequest, HttpVersion},
     response::{HttpResponse, HttpStatusCode, ResponseStatusLine},
     server,
     writer::{send_response, HttpBody, HttpWritable, HttpWriter},
@@ -82,9 +82,15 @@ impl HttpEncoding {
 
 /// Supports content negotiation for responses
 pub trait ContentNegotiable {
-    fn for_file(status: HttpStatusCode, filename: &str, content: String) -> Self;
+    fn for_file(
+        status: HttpStatusCode,
+        version: HttpVersion,
+        filename: &str,
+        content: String,
+    ) -> Self;
     fn with_negotiation(
         status_code: HttpStatusCode,
+        version: HttpVersion,
         content: String,
         accept_header: Option<&str>,
     ) -> Self;
@@ -286,6 +292,7 @@ impl Router {
         let accept_header = request.headers.get("Accept").map(|s| s.as_str());
         let err_response = HttpErrorResponse::new(
             HttpStatusCode::NotFound,
+            request.status_line.version.clone(),
             accept_header,
             "Route not found".to_string(),
         );
@@ -304,7 +311,12 @@ pub fn root_handler(
 ) {
     let body = "Welcome to the Rust HTTP Server!".to_string();
     let accept_type = request.headers.get("Accept").map(|s| s.as_str());
-    let response = HttpResponse::with_negotiation(HttpStatusCode::Ok, body, accept_type);
+    let response = HttpResponse::with_negotiation(
+        HttpStatusCode::Ok,
+        request.status_line.version.clone(),
+        body,
+        accept_type,
+    );
 
     send_response(stream, response).unwrap_or_else(|e| {
         HttpWriter::log_writer_error(e, "root_handler");
@@ -324,7 +336,12 @@ pub fn echo_handler(
         .unwrap_or("")
         .to_string();
     let accept_type = request.headers.get("Accept").map(|s| s.as_str());
-    let response = HttpResponse::with_negotiation(HttpStatusCode::Ok, body, accept_type);
+    let response = HttpResponse::with_negotiation(
+        HttpStatusCode::Ok,
+        request.status_line.version.clone(),
+        body,
+        accept_type,
+    );
 
     let accept_encoding = request.headers.get("Accept-Encoding").map(|s| s.as_str());
     let compressed_response = CompressionMiddleware::apply(response, accept_encoding);
@@ -346,7 +363,12 @@ pub fn file_handler(
     match request.status_line.method {
         HttpMethod::Get => {
             if let Ok(content) = fs::read_to_string(file_path) {
-                let response = HttpResponse::for_file(HttpStatusCode::Ok, filename, content);
+                let response = HttpResponse::for_file(
+                    HttpStatusCode::Ok,
+                    request.status_line.version.clone(),
+                    filename,
+                    content,
+                );
 
                 send_response(stream, response).unwrap_or_else(|e| {
                     HttpWriter::log_writer_error(e, "file_handler - sending file content");
@@ -354,6 +376,7 @@ pub fn file_handler(
             } else {
                 let err_response = HttpErrorResponse::for_file(
                     HttpStatusCode::NotFound,
+                    request.status_line.version.clone(),
                     filename,
                     format!("File '{}' not found", filename), // Create error message
                 );
@@ -368,6 +391,7 @@ pub fn file_handler(
                 Ok(_) => {
                     let response = HttpResponse::for_file(
                         HttpStatusCode::Created,
+                        request.status_line.version.clone(),
                         filename,
                         format!("File '{}' created/updated", filename),
                     );
@@ -379,6 +403,7 @@ pub fn file_handler(
                 Err(e) => {
                     let err_response = HttpErrorResponse::for_file(
                         HttpStatusCode::InternalServerError,
+                        request.status_line.version.clone(),
                         filename,
                         format!("Failed to write file '{}': {}", filename, e),
                     );
@@ -391,6 +416,7 @@ pub fn file_handler(
         _ => {
             let err_response = HttpErrorResponse::new(
                 HttpStatusCode::MethodNotAllowed,
+                request.status_line.version.clone(),
                 None,
                 "Method not allowed".to_string(),
             );
@@ -415,7 +441,12 @@ pub fn user_agent_handler(
         .unwrap_or("Unknown");
     let body = user_agent.to_string();
     let accept_type = request.headers.get("Accept").map(|s| s.as_str());
-    let response = HttpResponse::with_negotiation(HttpStatusCode::Ok, body, accept_type);
+    let response = HttpResponse::with_negotiation(
+        HttpStatusCode::Ok,
+        request.status_line.version.clone(),
+        body,
+        accept_type,
+    );
 
     send_response(stream, response).unwrap_or_else(|e| {
         HttpWriter::log_writer_error(e, "user_agent_handler");

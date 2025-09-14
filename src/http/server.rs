@@ -56,45 +56,54 @@ impl ServerContext {
 
 /// Handles incoming client connections
 pub fn handle_client(mut stream: TcpStream, ctx: ServerContext) {
-    let mut request_bytes: Vec<u8> = Vec::new();
-    let mut buffer = [0; 1024];
-
     loop {
-        match stream.read(&mut buffer) {
-            Ok(0) => break, // Connection closed
-            Ok(n) => {
-                request_bytes.extend_from_slice(&buffer[..n]);
-                // Check if we have a complete HTTP request (ending with \r\n\r\n)
-                if request_bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+        let mut request_bytes: Vec<u8> = Vec::new();
+        let mut buffer = [0; 1024];
+
+        loop {
+            match stream.read(&mut buffer) {
+                Ok(0) => break, // Connection closed
+                Ok(n) => {
+                    request_bytes.extend_from_slice(&buffer[..n]);
+                    // Check if we have a complete HTTP request (ending with \r\n\r\n)
+                    if request_bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    println!("Failed to read from stream: {}", e);
+                    return;
+                }
+            }
+        }
+
+        match request::HttpRequest::parse(&request_bytes) {
+            Ok(parse_ok) => {
+                let router = routes::Router::new();
+                router.route(&parse_ok, &mut stream, &ctx);
+                if parse_ok
+                    .headers
+                    .get("Connection")
+                    .is_some_and(|v| v.eq_ignore_ascii_case("close"))
+                {
+                    println!("Connection: close header found, shutting down connection.");
+                    stream.shutdown(Shutdown::Both).unwrap_or_else(|e| {
+                        println!("Failed to shutdown connection: {:?}", e);
+                    });
                     break;
                 }
             }
-            Err(e) => {
-                println!("Failed to read from stream: {}", e);
-                return;
+            Err(parse_error) => {
+                let error_response = errors::HttpErrorResponse::new(
+                    parse_error.status,
+                    parse_error.version,
+                    parse_error.headers.get("Accept").map(|s| s.as_str()),
+                    "Parsing failed".to_string(),
+                );
+                writer::send_response(&mut stream, error_response).unwrap_or_else(|e| {
+                    println!("Failed to send error response: {:?}", e);
+                });
             }
         }
     }
-
-    match request::HttpRequest::parse(&request_bytes) {
-        Ok(parse_ok) => {
-            let router = routes::Router::new();
-            router.route(&parse_ok, &mut stream, &ctx);
-        }
-        Err(parse_error) => {
-            let error_response = errors::HttpErrorResponse::new(
-                parse_error.status,
-                parse_error.headers.get("Accept").map(|s| s.as_str()),
-                "Parsing failed".to_string(),
-            );
-            writer::send_response(&mut stream, error_response).unwrap_or_else(|e| {
-                println!("Failed to send error response: {:?}", e);
-            });
-        }
-    }
-
-    // Graceful shutdown - signal we're done writing but let client finish reading
-    stream.shutdown(Shutdown::Write).unwrap_or_else(|e| {
-        println!("Warning: Failed to shutdown stream gracefully: {}", e);
-    });
 }

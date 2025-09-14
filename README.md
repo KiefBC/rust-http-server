@@ -7,7 +7,9 @@ Project based on: [CodeCrafters HTTP Protocol Server](https://app.codecrafters.i
 ## Features
 
 - Concurrent client connections
-- HTTP compression (gzip, deflate)
+- Persistent HTTP connections (keep-alive)
+- HTTP/1.0 and HTTP/1.1 version support
+- HTTP compression (gzip, deflate, brotli) with quality-based negotiation
 - Content negotiation (JSON, HTML, plain text)
 - File serving with read/write operations
 - Dynamic routing with path parameters
@@ -48,6 +50,12 @@ curl -H "Accept: application/json" http://localhost:4221/echo/test
 # File operations
 curl http://localhost:4221/files/test.txt
 curl -X POST -d "content" http://localhost:4221/files/new.txt
+
+# Persistent connections (multiple requests on same connection)
+curl --http1.1 http://localhost:4221/echo/first --next http://localhost:4221/echo/second
+
+# Force connection close
+curl --http1.1 -H "Connection: close" http://localhost:4221/
 ```
 
 ## Architecture

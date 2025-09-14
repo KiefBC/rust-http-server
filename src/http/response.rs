@@ -9,7 +9,12 @@ use crate::http::writer::{HttpBody, HttpWritable};
 
 impl ContentNegotiable for HttpResponse {
     /// Returns a response for a file with appropriate content type
-    fn for_file(status: HttpStatusCode, filename: &str, content: String) -> Self {
+    fn for_file(
+        status: HttpStatusCode,
+        version: HttpVersion,
+        filename: &str,
+        content: String,
+    ) -> Self {
         let content_type = match Path::new(filename).extension() {
             Some(ext) if ext == "html" => "text/html",
             Some(ext) if ext == "json" => "application/json",
@@ -18,14 +23,13 @@ impl ContentNegotiable for HttpResponse {
         };
 
         let status_line = ResponseStatusLine {
-            version: HttpVersion::Http1_1,
+            version,
             status: status.clone(),
         };
 
         let headers = HashMap::from([
             ("Content-Type".to_string(), content_type.to_string()),
             ("Content-Length".to_string(), content.len().to_string()),
-            ("Connection".to_string(), "close".to_string()),
         ]);
 
         let body = Some(content);
@@ -35,6 +39,7 @@ impl ContentNegotiable for HttpResponse {
     /// Determines content type from Accept header and formats body accordingly
     fn with_negotiation(
         status_code: HttpStatusCode,
+        version: HttpVersion,
         content: String,
         accept_header: Option<&str>,
     ) -> Self {
@@ -61,11 +66,15 @@ impl ContentNegotiable for HttpResponse {
                 body.as_ref()
                     .map_or("0".to_string(), |b| b.len().to_string()),
             ),
-            ("Connection".to_string(), "close".to_string()),
+            if version == HttpVersion::Http1_1 {
+                ("Connection".to_string(), "keep-alive".to_string())
+            } else {
+                ("Connection".to_string(), "close".to_string())
+            },
         ]);
 
         let status_line = ResponseStatusLine {
-            version: HttpVersion::Http1_1,
+            version: version.clone(),
             status: status_code.clone(),
         };
 
@@ -83,14 +92,17 @@ pub struct HttpResponse {
 }
 
 impl HttpWritable for HttpResponse {
+    /// Returns the status line of the response
     fn status_line(&self) -> &ResponseStatusLine {
         &self.status_line
     }
 
+    /// Returns the headers of the response
     fn headers(&self) -> HashMap<String, String> {
         self.headers.clone()
     }
 
+    /// Returns the body of the response
     fn body(&self) -> HttpBody {
         HttpBody::Text(self.body.clone().unwrap_or_default())
     }

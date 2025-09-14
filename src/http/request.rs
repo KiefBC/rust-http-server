@@ -7,6 +7,7 @@ use crate::http::response::HttpStatusCode;
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParseError {
     pub status: HttpStatusCode,
+    pub version: HttpVersion,
     pub headers: HashMap<String, String>,
 }
 
@@ -40,6 +41,7 @@ impl fmt::Display for HttpMethod {
 /// HTTP protocol versions
 #[derive(Debug, Clone, PartialEq)]
 pub enum HttpVersion {
+    Http1_0,
     Http1_1,
 }
 
@@ -47,6 +49,7 @@ pub enum HttpVersion {
 impl fmt::Display for HttpVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            HttpVersion::Http1_0 => write!(f, "HTTP/1.0"),
             HttpVersion::Http1_1 => write!(f, "HTTP/1.1"),
         }
     }
@@ -97,12 +100,14 @@ impl HttpRequest {
         if request.is_empty() {
             return Err(ParseError {
                 status: HttpStatusCode::BadRequest,
+                version: HttpVersion::Http1_0,
                 headers: HashMap::new(),
             });
         }
 
         let boundary = Self::find_boundary(request).ok_or(ParseError {
             status: HttpStatusCode::BadRequest,
+            version: HttpVersion::Http1_0,
             headers: HashMap::new(),
         })?;
 
@@ -121,6 +126,7 @@ impl HttpRequest {
             } else {
                 return Err(ParseError {
                     status: HttpStatusCode::BadRequest,
+                    version: HttpVersion::Http1_0,
                     headers,
                 });
             }
@@ -135,9 +141,22 @@ impl HttpRequest {
         if request_line.len() != 3 {
             return Err(ParseError {
                 status: HttpStatusCode::BadRequest,
+                version: HttpVersion::Http1_0,
                 headers,
             });
         }
+
+        let parsed_version = match request_line[2] {
+            "HTTP/1.0" => HttpVersion::Http1_0,
+            "HTTP/1.1" => HttpVersion::Http1_1,
+            _ => {
+                return Err(ParseError {
+                    status: HttpStatusCode::BadRequest,
+                    version: HttpVersion::Http1_0,
+                    headers,
+                })
+            }
+        };
 
         let method = match request_line[0] {
             "GET" => HttpMethod::Get,
@@ -147,6 +166,7 @@ impl HttpRequest {
             _ => {
                 return Err(ParseError {
                     status: HttpStatusCode::MethodNotAllowed,
+                    version: parsed_version,
                     headers,
                 })
             }
@@ -154,20 +174,10 @@ impl HttpRequest {
 
         let path = request_line[1].to_string();
 
-        let version = match request_line[2] {
-            "HTTP/1.1" => HttpVersion::Http1_1,
-            _ => {
-                return Err(ParseError {
-                    status: HttpStatusCode::BadRequest,
-                    headers,
-                })
-            }
-        };
-
         let status_line = RequestStatusLine {
             method: method.clone(),
             path: path.clone(),
-            version: version.clone(),
+            version: parsed_version.clone(),
         };
 
         let content_length = headers
@@ -212,7 +222,7 @@ mod tests {
 
         assert_eq!(request.status_line.method, HttpMethod::Get);
         assert_eq!(request.status_line.path, "/");
-        assert_eq!(request.status_line.version, HttpVersion::Http1_1);
+        assert_eq!(request.status_line.version, HttpVersion::Http1_0);
         assert_eq!(request.headers.get("Host").unwrap(), "localhost");
         assert_eq!(request.headers.get("User-Agent").unwrap(), "curl/7.64.1");
         assert_eq!(request.headers.get("Accept").unwrap(), "*/*");
@@ -228,6 +238,7 @@ mod tests {
             result.unwrap_err(),
             ParseError {
                 status: HttpStatusCode::MethodNotAllowed,
+                version: HttpVersion::Http1_1,
                 headers: HashMap::from([("Host".to_string(), "localhost".to_string())]),
             }
         );
@@ -242,6 +253,7 @@ mod tests {
             result.unwrap_err(),
             ParseError {
                 status: HttpStatusCode::BadRequest,
+                version: HttpVersion::Http1_0,
                 headers: HashMap::from([("Host".to_string(), "localhost".to_string())]),
             }
         );
@@ -264,6 +276,7 @@ mod tests {
             result.unwrap_err(),
             ParseError {
                 status: HttpStatusCode::BadRequest,
+                version: HttpVersion::Http1_0,
                 headers: HashMap::from([("Host".to_string(), "localhost".to_string())]),
             }
         );
@@ -278,6 +291,7 @@ mod tests {
             result.unwrap_err(),
             ParseError {
                 status: HttpStatusCode::BadRequest,
+                version: HttpVersion::Http1_0,
                 headers: HashMap::new(),
             }
         );
@@ -291,7 +305,7 @@ mod tests {
 
         assert_eq!(request.status_line.method, HttpMethod::Get);
         assert_eq!(request.status_line.path, "/");
-        assert_eq!(request.status_line.version, HttpVersion::Http1_1);
+        assert_eq!(request.status_line.version, HttpVersion::Http1_0);
         assert!(request.headers.is_empty());
     }
 
@@ -317,8 +331,8 @@ mod tests {
 
     #[test]
     fn test_http_version_display() {
-        let version = HttpVersion::Http1_1;
-        let expected = "HTTP/1.1";
+        let version = HttpVersion::Http1_0;
+        let expected = "HTTP/1.0";
         assert_eq!(version.to_string(), expected);
     }
 
@@ -327,7 +341,7 @@ mod tests {
         let status_line = RequestStatusLine {
             method: HttpMethod::Get,
             path: "/".to_string(),
-            version: HttpVersion::Http1_1,
+            version: HttpVersion::Http1_0,
         };
 
         let request = HttpRequest {
@@ -349,7 +363,7 @@ mod tests {
         let status_line = RequestStatusLine {
             method: HttpMethod::Get,
             path: "/".to_string(),
-            version: HttpVersion::Http1_1,
+            version: HttpVersion::Http1_0,
         };
 
         let request = HttpRequest {

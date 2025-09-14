@@ -1,5 +1,6 @@
 use crate::http::{
-    request, response,
+    request::{self, HttpVersion},
+    response,
     routes::ContentNegotiable,
     writer::{HttpBody, HttpWritable},
 };
@@ -17,20 +18,22 @@ impl ContentNegotiable for HttpErrorResponse {
     /// Returns an error response for a given file with content negotiation
     fn for_file(
         status: response::HttpStatusCode,
+        version: request::HttpVersion,
         _filename: &str,
         content: String,
     ) -> HttpErrorResponse {
         // For simplicity, we ignore filename-based negotiation here
-        HttpErrorResponse::new(status, None, content)
+        HttpErrorResponse::new(status, version, None, content)
     }
 
     /// Returns an error response with content negotiation based on Accept header
     fn with_negotiation(
         status_code: response::HttpStatusCode,
+        version: request::HttpVersion,
         content: String,
         accept_header: Option<&str>,
     ) -> HttpErrorResponse {
-        HttpErrorResponse::new(status_code, accept_header, content)
+        HttpErrorResponse::new(status_code, version, accept_header, content)
     }
 }
 
@@ -55,11 +58,12 @@ impl HttpErrorResponse {
     /// Creates a new HttpErrorResponse based on the status code, accept header, and message
     pub fn new(
         status_code: response::HttpStatusCode,
+        version: HttpVersion,
         accept_header: Option<&str>,
         message: String,
     ) -> HttpErrorResponse {
         let status_line = response::ResponseStatusLine {
-            version: request::HttpVersion::Http1_1,
+            version,
             status: status_code.clone(),
         };
 
