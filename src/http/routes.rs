@@ -242,7 +242,6 @@ pub fn echo_handler(
     let accept_type = request.headers.get("Accept").map(|s| s.as_str());
     let response = HttpResponse::with_negotiation(HttpStatusCode::Ok, body, accept_type);
 
-    // TODO(human): Apply compression middleware here
     let accept_encoding = request.headers.get("Accept-Encoding").map(|s| s.as_str());
     let compressed_response = CompressionMiddleware::apply(response, accept_encoding);
     send_response(stream, compressed_response).unwrap_or_else(|e| {
