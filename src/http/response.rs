@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::http::request::HttpVersion;
 use crate::http::routes::ContentNegotiable;
-use crate::http::writer::HttpWritable;
+use crate::http::writer::{HttpBody, HttpWritable};
 
 impl ContentNegotiable for HttpResponse {
     /// Returns a response for a file with appropriate content type
@@ -87,12 +87,12 @@ impl HttpWritable for HttpResponse {
         &self.status_line
     }
 
-    fn headers(&self) -> &HashMap<String, String> {
-        &self.headers
+    fn headers(&self) -> HashMap<String, String> {
+        self.headers.clone()
     }
 
-    fn body(&self) -> &Option<String> {
-        &self.body
+    fn body(&self) -> HttpBody {
+        HttpBody::Text(self.body.clone().unwrap_or_default())
     }
 }
 
@@ -185,15 +185,13 @@ impl fmt::Display for HttpStatusCode {
             HttpStatusCode::Created => write!(f, "201 Created"),
             HttpStatusCode::NoContent => write!(f, "204 No Content"),
             HttpStatusCode::InternalServerError => write!(f, "500 Internal Server Error"),
-            _ => write!(f, "520 Unknown Error"), // Fallback
         }
     }
 }
 
 /// Status line of an HTTP response
-/// // TODO: DRY! Reuse from request.rs instead
-// // TODO: version should be using out HttpVersion
 #[derive(Debug, Clone)]
+// TODO: DRY! Reuse from request.rs instead
 pub struct StatusLine {
     pub version: HttpVersion,
     pub status: HttpStatusCode,

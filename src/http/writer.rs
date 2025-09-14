@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-#![allow(clippy::all)]
 use std::collections::HashMap;
 use std::io::Write;
 use std::net::TcpStream;
@@ -8,11 +6,16 @@ use titlecase::Titlecase;
 use crate::http::request::HttpVersion;
 use crate::http::{response::HttpStatusCode, response::StatusLine};
 
+pub enum HttpBody {
+    Text(String),
+    Binary(Vec<u8>),
+}
+
 /// Writable HTTP entity trait
 pub trait HttpWritable {
     fn status_line(&self) -> &StatusLine;
-    fn headers(&self) -> &HashMap<String, String>;
-    fn body(&self) -> &Option<String>;
+    fn headers(&self) -> HashMap<String, String>;
+    fn body(&self) -> HttpBody;
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,7 +49,7 @@ pub struct HttpWriter<'a> {
     state: WriterState,
     status_line: Option<String>,
     headers: HashMap<String, String>,
-    body: Option<String>,
+    body: Option<Vec<u8>>,
     // TODO: Trailers eventually
 }
 
@@ -113,7 +116,7 @@ impl<'a> HttpWriter<'a> {
     }
 
     /// Writes the body to the HTTP response
-    pub fn write_body(&mut self, body: String) -> Result<(), WriterError> {
+    pub fn write_body(&mut self, body: &[u8]) -> Result<(), WriterError> {
         if self.state != WriterState::HeadersClosed {
             self.state = WriterState::Failed;
             return Err(WriterError::InvalidState(
@@ -121,7 +124,7 @@ impl<'a> HttpWriter<'a> {
             ));
         }
 
-        self.body = Some(body);
+        self.body = Some(body.to_vec());
         self.state = WriterState::BodyWritten;
         Ok(())
     }
@@ -161,18 +164,15 @@ impl<'a> HttpWriter<'a> {
 
             self.stream
                 .write_all(self.status_line.as_ref().unwrap().as_bytes())?;
-            self.stream.write_all(
-                self.headers
-                    .iter()
-                    .map(|(k, v)| format!("{}: {}\r\n", k, v))
-                    .collect::<String>()
-                    .as_bytes(),
-            )?;
+            for (key, value) in &self.headers {
+                self.stream
+                    .write_all(format!("{}: {}\r\n", key, value).as_bytes())?;
+            }
             self.stream.write_all(b"\r\n")?;
             if self.body.is_some() {
                 // if body is present, write it
                 self.stream
-                    .write_all(self.body.as_ref().unwrap().as_bytes())?;
+                    .write_all(self.body.as_ref().unwrap().as_slice())?;
             }
             self.stream.flush()?;
 
@@ -182,21 +182,6 @@ impl<'a> HttpWriter<'a> {
                 "Content-Length header is required".to_string(),
             ))
         }
-    }
-
-    /// write convenience methods for common responses
-    pub fn ok_response(stream: &mut TcpStream, body: String) -> Result<(), WriterError> {
-        let mut writer = HttpWriter::new(stream);
-
-        writer.write_status_line(HttpVersion::Http1_1, HttpStatusCode::Ok)?;
-        writer.write_header("Content-Length".to_string(), body.len().to_string())?;
-        writer.write_header("Content-Type".to_string(), "text/plain".to_string())?;
-        writer.write_header("Connection".to_string(), "close".to_string())?;
-        writer.finish_headers()?;
-        writer.write_body(body)?;
-        writer.complete_write()?;
-
-        Ok(())
     }
 
     /// Logs WriterError with specific context for each error variant
@@ -223,25 +208,6 @@ impl<'a> HttpWriter<'a> {
             }
         }
     }
-
-    /// write convenience method for error responses
-    pub fn error_response(
-        stream: &mut TcpStream,
-        status: HttpStatusCode,
-        body: String,
-    ) -> Result<(), WriterError> {
-        let mut writer = HttpWriter::new(stream);
-
-        writer.write_status_line(HttpVersion::Http1_1, status)?;
-        writer.write_header("Content-Length".to_string(), body.len().to_string())?;
-        writer.write_header("Content-Type".to_string(), "text/plain".to_string())?;
-        writer.write_header("Connection".to_string(), "close".to_string())?;
-        writer.finish_headers()?;
-        writer.write_body(body)?;
-        writer.complete_write()?;
-
-        Ok(())
-    }
 }
 
 pub fn send_response<T: HttpWritable>(
@@ -255,10 +221,15 @@ pub fn send_response<T: HttpWritable>(
         response.status_line().status.clone(),
     )?;
     for (key, value) in response.headers() {
-        writer.write_header(key.to_string(), value.to_string())?;
+        writer.write_header(key, value)?;
     }
     writer.finish_headers()?;
-    writer.write_body(response.body().clone().unwrap_or_default())?;
+    match response.body() {
+        HttpBody::Text(text) => writer.write_body(text.as_bytes())?,
+        HttpBody::Binary(bytes) => {
+            writer.write_body(&bytes)?;
+        }
+    }
     writer.complete_write()?;
 
     Ok(())

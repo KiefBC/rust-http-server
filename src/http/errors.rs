@@ -1,4 +1,8 @@
-use crate::http::{request, response, routes::ContentNegotiable, writer::HttpWritable};
+use crate::http::{
+    request, response,
+    routes::ContentNegotiable,
+    writer::{HttpBody, HttpWritable},
+};
 use std::collections::HashMap;
 
 /// Represents an HTTP error response
@@ -37,13 +41,13 @@ impl HttpWritable for HttpErrorResponse {
     }
 
     /// Returns the headers of the error response
-    fn headers(&self) -> &HashMap<String, String> {
-        &self.headers
+    fn headers(&self) -> HashMap<String, String> {
+        self.headers.clone()
     }
 
     /// Returns the body of the error response
-    fn body(&self) -> &Option<String> {
-        &self.body
+    fn body(&self) -> HttpBody {
+        HttpBody::Text(self.body.clone().unwrap_or_default())
     }
 }
 

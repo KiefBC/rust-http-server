@@ -43,15 +43,6 @@ pub enum HttpVersion {
     Http1_1,
 }
 
-impl HttpVersion {
-    pub fn get_version(version_str: &str) -> HttpVersion {
-        match version_str {
-            "HTTP/1.1" => HttpVersion::Http1_1,
-            _ => HttpVersion::Http1_1, // Default to HTTP/1.1 for now
-        }
-    }
-}
-
 /// Formats HttpVersion for display
 impl fmt::Display for HttpVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -136,7 +127,7 @@ impl HttpRequest {
         }
 
         let mut body = "".to_string();
-        if body_bytes.len() > 0 {
+        if !body_bytes.is_empty() {
             body = Self::bytes_to_lines(body_bytes).join("\n");
         }
 
@@ -195,13 +186,7 @@ impl HttpRequest {
 
     /// Locates the boundary between headers and body in raw HTTP request bytes
     fn find_boundary(bytes: &[u8]) -> Option<usize> {
-        // Look for [13, 10, 13, 10] which is \r\n\r\n
-        for i in 0..bytes.len() - 3 {
-            if bytes[i..i + 4] == [13, 10, 13, 10] {
-                return Some(i);
-            }
-        }
-        None
+        bytes.windows(4).position(|window| window == b"\r\n\r\n")
     }
 
     /// Returns lines from raw bytes

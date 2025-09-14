@@ -5,7 +5,7 @@ use crate::http::{
     request::{HttpMethod, HttpRequest},
     response::{HttpResponse, HttpStatusCode},
     server,
-    writer::{send_response, HttpWriter},
+    writer::{send_response, HttpBody, HttpWritable, HttpWriter},
 };
 
 /// Supports content negotiation for responses
@@ -16,6 +16,83 @@ pub trait ContentNegotiable {
         content: String,
         accept_header: Option<&str>,
     ) -> Self;
+}
+
+pub struct CompressionMiddleware;
+
+impl CompressionMiddleware {
+    pub fn apply<T: HttpWritable>(
+        response: T,
+        accept_encoding: Option<&str>,
+    ) -> CompressedResponse<T> {
+        let encoding = if let Some(encodings) = accept_encoding {
+            if encodings.contains("gzip") {
+                "gzip"
+            } else if encodings.contains("deflate") {
+                "deflate"
+            } else {
+                "identity"
+            }
+        } else {
+            "identity"
+        };
+
+        let body = match response.body() {
+            HttpBody::Text(text) => text.into_bytes(),
+            HttpBody::Binary(bin) => bin,
+        };
+
+        let compressed_body = match encoding {
+            "gzip" => {
+                let mut encoder = libflate::gzip::Encoder::new(Vec::new()).unwrap();
+                std::io::copy(&mut &body[..], &mut encoder).unwrap();
+                encoder.finish().into_result().unwrap()
+            }
+            "deflate" => {
+                let mut encoder = libflate::deflate::Encoder::new(Vec::new());
+                std::io::copy(&mut &body[..], &mut encoder).unwrap();
+                encoder.finish().into_result().unwrap()
+            }
+            _ => body, // identity, no compression
+        };
+
+        CompressedResponse {
+            original: response,
+            encoding: encoding.to_string(),
+            compressed_body,
+        }
+    }
+}
+
+pub struct CompressedResponse<T: HttpWritable> {
+    original: T,
+    encoding: String,
+    compressed_body: Vec<u8>,
+}
+
+impl<T: HttpWritable> HttpWritable for CompressedResponse<T> {
+    fn status_line(&self) -> &crate::http::response::StatusLine {
+        self.original.status_line()
+    }
+
+    fn headers(&self) -> HashMap<String, String> {
+        let mut headers = self.original.headers().clone();
+        headers.remove("Content-Length");
+
+        if self.encoding != "identity" {
+            headers.insert("Content-Encoding".to_string(), self.encoding.clone());
+        }
+        headers.insert(
+            "Content-Length".to_string(),
+            self.compressed_body.len().to_string(),
+        );
+
+        headers
+    }
+
+    fn body(&self) -> HttpBody {
+        HttpBody::Binary(self.compressed_body.clone())
+    }
 }
 
 /// Represents a single route
@@ -165,7 +242,10 @@ pub fn echo_handler(
     let accept_type = request.headers.get("Accept").map(|s| s.as_str());
     let response = HttpResponse::with_negotiation(HttpStatusCode::Ok, body, accept_type);
 
-    send_response(stream, response).unwrap_or_else(|e| {
+    // TODO(human): Apply compression middleware here
+    let accept_encoding = request.headers.get("Accept-Encoding").map(|s| s.as_str());
+    let compressed_response = CompressionMiddleware::apply(response, accept_encoding);
+    send_response(stream, compressed_response).unwrap_or_else(|e| {
         HttpWriter::log_writer_error(e, "echo_handler");
     });
 }
