@@ -51,6 +51,9 @@ curl -H "Accept-Encoding: gzip" http://localhost:4221/echo/hello
 # Content negotiation
 curl -H "Accept: application/json" http://localhost:4221/echo/test
 
+# User-Agent endpoint
+curl -H "User-Agent: myclient/1.0" http://localhost:4221/user-agent
+
 # File operations
 curl http://localhost:4221/files/test.txt
 curl -X POST -d "content" http://localhost:4221/files/new.txt
@@ -61,6 +64,11 @@ curl --http1.1 http://localhost:4221/echo/first --next http://localhost:4221/ech
 # Force connection close
 curl --http1.1 -H "Connection: close" http://localhost:4221/
 ```
+
+## File Serving Notes
+- Root directory: set via `--directory <path>`. If omitted or invalid, the server falls back to an internal default; missing roots will cause file routes to return 404.
+- Resolution: file paths are resolved by joining the configured root with `{filename}`. If the joined path doesn’t exist or can’t be read, the server returns 404.
+- Caveat: path normalization is not yet enforced. Avoid `..` segments or untrusted filenames until traversal hardening is added.
 
 ## Architecture
 
