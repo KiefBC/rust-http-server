@@ -153,6 +153,7 @@ impl CompressionMiddleware {
     }
 }
 
+/// Represents a response with applied compression
 pub struct CompressedResponse<T: HttpWritable> {
     original: T,
     encoding: String,
@@ -196,6 +197,7 @@ pub struct Route {
         params: &HashMap<String, String>,
         stream: &mut TcpStream,
         ctx: &server::ServerContext,
+        req_id: u64,
     ),
 }
 
@@ -227,6 +229,7 @@ impl Router {
             &HashMap<String, String>,
             &mut TcpStream,
             ctx: &server::ServerContext,
+            req_id: u64,
         ),
     ) {
         let route = Route {
@@ -247,6 +250,7 @@ impl Router {
             &HashMap<String, String>,
             &mut TcpStream,
             ctx: &server::ServerContext,
+            req_id: u64,
         ),
     ) {
         let route = Route {
@@ -264,6 +268,7 @@ impl Router {
         request: &HttpRequest,
         stream: &mut TcpStream,
         ctx: &server::ServerContext,
+        req_id: u64,
     ) {
         for route in &self.routes {
             if route.method == request.status_line.method {
@@ -285,7 +290,7 @@ impl Router {
                     }
 
                     if is_match {
-                        return (route.handler)(request, &params, stream, ctx);
+                        return (route.handler)(request, &params, stream, ctx, req_id);
                     }
                 }
             }
@@ -311,7 +316,9 @@ pub fn root_handler(
     _params: &HashMap<String, String>,
     stream: &mut TcpStream,
     _ctx: &server::ServerContext,
+    req_id: u64,
 ) {
+    eprintln!("[request {}][root] handling /", req_id);
     let body = "Welcome to the Rust HTTP Server!".to_string();
     let accept_type = request.headers.get("Accept").map(|s| s.as_str());
     let response = HttpResponse::with_negotiation(
@@ -333,7 +340,9 @@ pub fn echo_handler(
     params: &HashMap<String, String>,
     stream: &mut TcpStream,
     _ctx: &server::ServerContext,
+    req_id: u64,
 ) {
+    eprintln!("[request {}][echo] params={:?}", req_id, params);
     let body = params
         .get("text")
         .map(|s| s.as_str())
@@ -361,63 +370,129 @@ pub fn file_handler(
     params: &HashMap<String, String>,
     stream: &mut TcpStream,
     ctx: &server::ServerContext,
+    req_id: u64,
 ) {
     let filename = params.get("filename").map(|s| s.as_str()).unwrap_or("");
-    let file_path = ctx.get_serving_directory().join(filename);
+    eprintln!(
+        "[request {}][file] method={} raw_path={} filename_param={:?}",
+        req_id, request.status_line.method, request.status_line.path, filename
+    );
+    // Resolve the requested path safely under the configured root
+    let conn = request
+        .headers
+        .get("Connection")
+        .map(|s| s.as_str())
+        .unwrap_or("");
 
     match request.status_line.method {
-        HttpMethod::Get => {
-            if let Ok(content) = fs::read_to_string(file_path) {
-                let response = HttpResponse::for_file(
-                    HttpStatusCode::Ok,
-                    request.status_line.version.clone(),
-                    request.headers.get("Connection").map_or("", |s| s.as_str()),
-                    filename,
-                    content,
-                );
-
-                send_response(stream, response).unwrap_or_else(|e| {
-                    HttpWriter::log_writer_error(e, "file_handler - sending file content");
-                });
-            } else {
-                let err_response = HttpErrorResponse::for_file(
-                    HttpStatusCode::NotFound,
-                    request.status_line.version.clone(),
-                    request.headers.get("Connection").map_or("", |s| s.as_str()),
-                    filename,
-                    format!("File '{}' not found", filename), // Create error message
-                );
-                send_response(stream, err_response).unwrap_or_else(|e| {
-                    HttpWriter::log_writer_error(e, "file_handler - sending 404 response");
-                });
-            }
-        }
-        HttpMethod::Post => {
-            let content = request.body.as_ref().map_or("", |b| b.as_str());
-            match fs::write(&file_path, content) {
-                Ok(_) => {
+        HttpMethod::Get => match ctx.resolve_path(filename, server::AccessIntent::Read, req_id) {
+            Ok(resolved) => match fs::read_to_string(resolved.path()) {
+                Ok(content) => {
                     let response = HttpResponse::for_file(
-                        HttpStatusCode::Created,
+                        HttpStatusCode::Ok,
                         request.status_line.version.clone(),
-                        request.headers.get("Connection").map_or("", |s| s.as_str()),
+                        conn,
                         filename,
-                        format!("File '{}' created/updated", filename),
+                        content,
                     );
-
                     send_response(stream, response).unwrap_or_else(|e| {
-                        HttpWriter::log_writer_error(e, "file_handler - sending 200 response");
+                        HttpWriter::log_writer_error(e, "file_handler - sending file content");
                     });
                 }
                 Err(e) => {
                     let err_response = HttpErrorResponse::for_file(
                         HttpStatusCode::InternalServerError,
                         request.status_line.version.clone(),
-                        request.headers.get("Connection").map_or("", |s| s.as_str()),
+                        conn,
                         filename,
-                        format!("Failed to write file '{}': {}", filename, e),
+                        format!("Failed to read file '{}': {}", filename, e),
                     );
                     send_response(stream, err_response).unwrap_or_else(|e| {
-                        HttpWriter::log_writer_error(e, "file_handler - sending 500 response");
+                        HttpWriter::log_writer_error(
+                            e,
+                            "file_handler - sending 500 response (read)",
+                        );
+                    });
+                }
+            },
+            Err(err) => {
+                let status = match err {
+                    server::ResolveError::Forbidden => HttpStatusCode::Forbidden,
+                    server::ResolveError::NotFound => HttpStatusCode::NotFound,
+                    server::ResolveError::Invalid => HttpStatusCode::NotFound,
+                    server::ResolveError::Io => HttpStatusCode::InternalServerError,
+                };
+                let err_response = HttpErrorResponse::for_file(
+                    status,
+                    request.status_line.version.clone(),
+                    conn,
+                    filename,
+                    "File resolution failed".to_string(),
+                );
+                send_response(stream, err_response).unwrap_or_else(|e| {
+                    HttpWriter::log_writer_error(e, "file_handler - sending error response (GET)");
+                });
+            }
+        },
+        HttpMethod::Post => {
+            let content = request.body.as_ref().map_or("", |b| b.as_str());
+            match ctx.resolve_path(filename, server::AccessIntent::Write, req_id) {
+                Ok(resolved) => match fs::write(resolved.path(), content) {
+                    Ok(_) => {
+                        let status = if resolved.exists() {
+                            HttpStatusCode::Ok
+                        } else {
+                            HttpStatusCode::Created
+                        };
+                        let response = HttpResponse::for_file(
+                            status,
+                            request.status_line.version.clone(),
+                            conn,
+                            filename,
+                            format!("File '{}' created/updated", filename),
+                        );
+                        send_response(stream, response).unwrap_or_else(|e| {
+                            HttpWriter::log_writer_error(
+                                e,
+                                "file_handler - sending success response (POST)",
+                            );
+                        });
+                    }
+                    Err(e) => {
+                        let err_response = HttpErrorResponse::for_file(
+                            HttpStatusCode::InternalServerError,
+                            request.status_line.version.clone(),
+                            conn,
+                            filename,
+                            format!("Failed to write file '{}': {}", filename, e),
+                        );
+                        send_response(stream, err_response).unwrap_or_else(|e| {
+                            HttpWriter::log_writer_error(
+                                e,
+                                "file_handler - sending 500 response (write)",
+                            );
+                        });
+                    }
+                },
+                Err(err) => {
+                    let status = match err {
+                        server::ResolveError::Forbidden => HttpStatusCode::Forbidden,
+                        server::ResolveError::NotFound => HttpStatusCode::NotFound,
+                        server::ResolveError::Invalid => HttpStatusCode::NotFound,
+                        server::ResolveError::Io => HttpStatusCode::InternalServerError,
+                    };
+                    let err_response = HttpErrorResponse::for_file(
+                        status,
+                        request.status_line.version.clone(),
+                        conn,
+                        filename,
+                        "File resolution failed".to_string(),
+                    );
+                    send_response(stream, err_response).unwrap_or_else(|e| {
+                        HttpWriter::log_writer_error(
+                            e,
+                            "file_handler - sending error response (POST)",
+                        );
                     });
                 }
             }
@@ -443,7 +518,9 @@ pub fn user_agent_handler(
     _params: &HashMap<String, String>,
     stream: &mut TcpStream,
     _ctx: &server::ServerContext,
+    req_id: u64,
 ) {
+    eprintln!("[request {}][user-agent]", req_id);
     let user_agent = request
         .headers
         .get("User-Agent")

@@ -67,7 +67,7 @@ impl HttpErrorResponse {
     pub fn new(
         status_code: response::HttpStatusCode,
         version: HttpVersion,
-        connection_header: &str,
+        _connection_header: &str,
         accept_header: Option<&str>,
         message: String,
     ) -> HttpErrorResponse {
