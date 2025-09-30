@@ -2,66 +2,8 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::http::response::HttpStatusCode;
-
-/// Represents an error that occurred while parsing an HTTP request
-#[derive(Debug, Clone, PartialEq)]
-pub struct ParseError {
-    pub status: HttpStatusCode,
-    pub version: HttpVersion,
-    pub headers: HashMap<String, String>,
-}
-
-impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ParseError: {}", self.status)
-    }
-}
-
-/// Represents HTTP methods
-#[derive(Debug, Clone, PartialEq)]
-pub enum HttpMethod {
-    Get,
-    Post,
-    Put,
-    Delete,
-}
-
-/// Formats HttpMethod for display
-impl fmt::Display for HttpMethod {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            HttpMethod::Get => write!(f, "GET"),
-            HttpMethod::Post => write!(f, "POST"),
-            HttpMethod::Put => write!(f, "PUT"),
-            HttpMethod::Delete => write!(f, "DELETE"),
-        }
-    }
-}
-
-/// HTTP protocol versions
-#[derive(Debug, Clone, PartialEq)]
-pub enum HttpVersion {
-    Http1_0,
-    Http1_1,
-}
-
-/// Formats HttpVersion for display
-impl fmt::Display for HttpVersion {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            HttpVersion::Http1_0 => write!(f, "HTTP/1.0"),
-            HttpVersion::Http1_1 => write!(f, "HTTP/1.1"),
-        }
-    }
-}
-
-/// Represents the status line of an HTTP request
-#[derive(Debug, Clone)]
-pub struct RequestStatusLine {
-    pub method: HttpMethod,
-    pub path: String,
-    pub version: HttpVersion,
-}
+use super::errors::ParseError;
+use super::types::{HttpMethod, HttpVersion, RequestStatusLine};
 
 /// Represents an HTTP request
 #[derive(Debug, Clone)]
@@ -69,26 +11,28 @@ pub struct HttpRequest {
     pub status_line: RequestStatusLine,
     pub headers: HashMap<String, String>, // "Content-Type" -> "application/json"
     pub body: Option<String>,
-    // TODO: Trailers and etc
 }
 
-/// Formats HttpRequest for display
 impl fmt::Display for HttpRequest {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "{} {} {}\r\n",
             self.status_line.method, self.status_line.path, self.status_line.version
         )?;
+
         let mut headers: Vec<_> = self.headers.iter().collect();
         headers.sort_by_key(|(key, _)| *key);
+
         for (key, value) in headers {
             write!(f, "{}: {}\r\n", key, value)?;
         }
+
         write!(f, "\r\n")?;
         if let Some(body) = &self.body {
             write!(f, "{}", body)?;
         }
+
         Ok(())
     }
 }
@@ -96,7 +40,7 @@ impl fmt::Display for HttpRequest {
 impl HttpRequest {
     /// Parses raw request lines into HttpRequest
     pub fn parse(request: &[u8]) -> Result<Self, ParseError> {
-        // we expect at least a request line
+        // We expect at least a request line
         if request.is_empty() {
             return Err(ParseError {
                 status: HttpStatusCode::BadRequest,
@@ -114,7 +58,7 @@ impl HttpRequest {
         let (header_bytes, body_bytes) = request.split_at(boundary);
         let body_bytes = &body_bytes[4..]; // skip the \r\n\r\n
 
-        // parse headers first so we can return them in case of error
+        // Parse headers first so we can return them in case of error
         let mut headers: HashMap<String, String> = HashMap::new();
         let header_lines = Self::bytes_to_lines(header_bytes);
         for line in &header_lines[1..] {

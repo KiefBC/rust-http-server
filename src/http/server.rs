@@ -11,11 +11,16 @@ use std::{
 
 use crate::http::{errors, request, routes, writer};
 
+const RESERVED_NAMES: &[&str] = &[
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
+
 #[derive(Debug, Clone)]
 /// Server context holding configuration and state
 pub struct ServerContext {
-    root_path: path::PathBuf,
-    canon_path: path::PathBuf,
+    root_path: PathBuf,
+    canon_path: PathBuf,
     request_counter: Arc<AtomicU64>,
 }
 
@@ -43,13 +48,13 @@ pub enum InitError {
 
 /// Result of path resolution
 pub struct ResolvedPath {
-    path: path::PathBuf,
+    path: PathBuf,
     exists: bool,
 }
 
 impl ResolvedPath {
     /// Gets the resolved absolute path
-    pub fn path(&self) -> &path::PathBuf {
+    pub fn path(&self) -> &PathBuf {
         &self.path
     }
 
@@ -60,7 +65,7 @@ impl ResolvedPath {
 }
 
 impl ServerContext {
-    /// Creates a new ServerContext with optional directory path
+    /// Creates a new ServerContext with an optional directory path
     pub fn new(root_dir: &str) -> Result<Self, InitError> {
         let root_path = PathBuf::from(root_dir);
         let canon_path = fs::canonicalize(&root_path).map_err(|_| InitError::RootUnavailable)?;
@@ -135,7 +140,7 @@ impl ServerContext {
         if path_obj.components().any(|comp| {
             matches!(
                 comp,
-                std::path::Component::RootDir | std::path::Component::Prefix(_)
+                path::Component::RootDir | path::Component::Prefix(_)
             )
         }) {
             eprintln!(
@@ -148,7 +153,7 @@ impl ServerContext {
         if path_obj.components().any(|c| {
             matches!(
                 c,
-                std::path::Component::CurDir | std::path::Component::ParentDir
+                path::Component::CurDir | path::Component::ParentDir
             )
         }) {
             eprintln!(
@@ -158,10 +163,20 @@ impl ServerContext {
             return Err(ResolveError::Forbidden);
         }
 
-        // Do not allow path separators introduced via decoding (e.g., %2F)
-        if decoded.contains('/') || decoded.contains('\\') {
+        if req_path.contains('\\') {
             eprintln!(
-                "[request {}][resolve_path] invalid: decoded contains path separator",
+                "[request {}][resolve_path] invalid: raw path contains backslash",
+                req_id
+            );
+            return Err(ResolveError::Invalid);
+        }
+        if req_path
+            .as_bytes()
+            .windows(3)
+            .any(|w| w == b"%2F" || w == b"%2f" || w == b"%5C" || w == b"%5c")
+        {
+            eprintln!(
+                "[request {}][resolve_path] invalid: percent-encoded path separator",
                 req_id
             );
             return Err(ResolveError::Invalid);
@@ -183,31 +198,7 @@ impl ServerContext {
             return Err(ResolveError::Invalid);
         }
         let base = last.split('.').next().unwrap_or("").to_ascii_lowercase();
-        let is_reserved = matches!(
-            base.as_str(),
-            "con"
-                | "prn"
-                | "aux"
-                | "nul"
-                | "com1"
-                | "com2"
-                | "com3"
-                | "com4"
-                | "com5"
-                | "com6"
-                | "com7"
-                | "com8"
-                | "com9"
-                | "lpt1"
-                | "lpt2"
-                | "lpt3"
-                | "lpt4"
-                | "lpt5"
-                | "lpt6"
-                | "lpt7"
-                | "lpt8"
-                | "lpt9"
-        );
+        let is_reserved = RESERVED_NAMES.contains(&base.as_str());
         if is_reserved {
             eprintln!(
                 "[request {}][resolve_path] invalid: reserved Windows name '{}'",
@@ -247,7 +238,7 @@ impl ServerContext {
                 })
             }
             AccessIntent::Write => {
-                // Canonicalize the parent; file may not exist yet
+                // Canonicalize the parent; a file may not exist yet
                 let parent = candidate.parent().ok_or_else(|| {
                     eprintln!(
                         "[request {}][resolve_path] invalid: missing parent directory",
@@ -281,7 +272,7 @@ impl ServerContext {
 /// Percent-decodes a path segment. Returns Err on malformed sequences.
 fn percent_decode(input: &str) -> Result<String, ()> {
     let bytes = input.as_bytes();
-    let mut out = String::with_capacity(bytes.len());
+    let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
@@ -289,21 +280,21 @@ fn percent_decode(input: &str) -> Result<String, ()> {
                 if i + 2 >= bytes.len() {
                     return Err(());
                 }
-                let h1 = bytes[i + 1] as char;
-                let h2 = bytes[i + 2] as char;
-                let v1 = h1.to_digit(16).ok_or(())? as u8;
-                let v2 = h2.to_digit(16).ok_or(())? as u8;
-                let b = (v1 << 4) | v2;
-                out.push(b as char);
+                let high_char = bytes[i + 1] as char;
+                let low_char = bytes[i + 2] as char;
+                let high_nibble = high_char.to_digit(16).ok_or(())? as u8;
+                let low_nibble = low_char.to_digit(16).ok_or(())? as u8;
+                let byte = (high_nibble << 4) | low_nibble;
+                out.push(byte);
                 i += 3;
             }
             ch => {
-                out.push(ch as char);
+                out.push(ch);
                 i += 1;
             }
         }
     }
-    Ok(out)
+    String::from_utf8(out).map_err(|_| ())
 }
 
 /// Handles incoming client connections
@@ -374,7 +365,7 @@ pub fn handle_client(mut stream: TcpStream, ctx: ServerContext) {
                     parse_error.headers.get("Accept").map(|s| s.as_str()),
                     "Parsing failed".to_string(),
                 );
-                writer::send_response(&mut stream, error_response).unwrap_or_else(|e| {
+                writer::send_response(&mut stream, error_response, req_id).unwrap_or_else(|e| {
                     println!(
                         "[request {}] Failed to send error response: {:?}",
                         req_id, e

@@ -16,6 +16,7 @@ Project based on: [CodeCrafters HTTP Protocol Server](https://app.codecrafters.i
 - HTTP compression (gzip, deflate, brotli) with quality-based negotiation
 - Content negotiation (JSON, HTML, plain text)
 - File serving with read/write operations
+- **Range requests (206 Partial Content)** - Video streaming and partial file downloads
 - Dynamic routing with path parameters
 - Binary-safe data pipeline
 
@@ -34,10 +35,11 @@ cargo run -- --directory /path/to/files
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | / | Server welcome message |
-| GET | /echo/{text} | Echo service |
+| GET | /echo/{text} | Echo service with compression |
 | GET | /user-agent | Returns User-Agent header |
-| GET | /files/{filename} | Read file |
+| GET | /files/{filename} | Read file (supports range requests) |
 | POST | /files/{filename} | Write file |
+| GET | /chunked/{text} | Chunked transfer encoding demo |
 
 ## Example Usage
 
@@ -58,11 +60,19 @@ curl -H "User-Agent: myclient/1.0" http://localhost:4221/user-agent
 curl http://localhost:4221/files/test.txt
 curl -X POST -d "content" http://localhost:4221/files/new.txt
 
+# Range requests (partial content)
+curl -H "Range: bytes=0-999" http://localhost:4221/files/video.mp4
+curl -H "Range: bytes=1000-" http://localhost:4221/files/video.mp4
+
 # Persistent connections (multiple requests on same connection)
 curl --http1.1 http://localhost:4221/echo/first --next http://localhost:4221/echo/second
 
 # Force connection close
 curl --http1.1 -H "Connection: close" http://localhost:4221/
+
+# Chunked transfer encoding (HTTP/1.1)
+curl --http1.1 http://localhost:4221/chunked/streaming-data
+curl --http1.1 -v http://localhost:4221/chunked/test  # -v shows Transfer-Encoding: chunked header
 ```
 
 ## File Serving Notes
@@ -70,18 +80,14 @@ curl --http1.1 -H "Connection: close" http://localhost:4221/
 - Resolution: file paths are resolved by joining the configured root with `{filename}`. If the joined path doesn’t exist or can’t be read, the server returns 404.
 - Caveat: path normalization is not yet enforced. Avoid `..` segments or untrusted filenames until traversal hardening is added.
 
-## Architecture
-
-Built with a modular design featuring state-machine-based response handling, middleware support for compression, and comprehensive error handling throughout the request/response pipeline.
-
 ## TODO: HTTP/1.1 Features
 
 ### Required for Full Compliance
-- [ ] **Chunked Transfer Encoding** - Stream responses without knowing Content-Length
+- [x] **Chunked Transfer Encoding** - Stream responses without knowing Content-Length
 - [ ] **Host Header Validation** - Require and validate Host header (HTTP/1.1 mandatory)
 
 ### Performance & Caching
-- [ ] **Range Requests** - Partial content delivery (206 status)
+- [x] **Range Requests** - Partial content delivery (206 status)
 - [ ] **Caching Headers** - ETag, If-None-Match, Cache-Control
 - [ ] **Conditional Requests** - 304 Not Modified responses
 - [ ] **Last-Modified/If-Modified-Since** - Time-based caching

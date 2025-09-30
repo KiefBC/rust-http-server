@@ -15,15 +15,13 @@ fn main() {
             "No directory specified. Using default directory: {}",
             DEFAULT_DIR
         );
-        if let Err(e) = create_dir_all(DEFAULT_DIR) {
-            eprintln!(
-                "Failed to create default directory {}: {:?}",
-                DEFAULT_DIR, e
-            );
-            process::exit(1);
-        }
     } else {
         println!("Using specified directory: {}", root_dir);
+    }
+
+    if let Err(e) = create_dir_all(&root_dir) {
+        eprintln!("Failed to create directory {}: {:?}", root_dir, e);
+        process::exit(1);
     }
 
     let context = match server::ServerContext::new(&root_dir) {
@@ -42,7 +40,6 @@ fn main() {
                 println!("\nAccepted Connection: {}", stream.peer_addr().unwrap());
                 let ctx = context.clone();
                 thread::spawn(move || server::handle_client(stream, ctx));
-                println!("Connection Closed, bye!");
             }
             Err(e) => {
                 println!("error: {}", e);
