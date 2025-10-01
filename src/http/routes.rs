@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt, fs, net::TcpStream, path::Path};
+use std::{collections::HashMap, fmt, fs, io, net::TcpStream, path::Path};
 
 use crate::http::{
     errors::HttpErrorResponse,
@@ -15,11 +15,16 @@ use crate::http::{
     writer::{send_response, HttpBody, HttpWritable, HttpWriter},
 };
 
+/// The minimum body size (in bytes) to consider compression
+const MINIMUM_BODY_SIZE: usize = 1024;
+
 /// Represents supported HTTP Encoding types
+#[derive(Debug, Clone)]
 pub enum HttpEncoding {
     Gzip,
     Deflate,
     Brotli,
+    Identity,
 }
 
 impl fmt::Display for HttpEncoding {
@@ -28,6 +33,7 @@ impl fmt::Display for HttpEncoding {
             HttpEncoding::Gzip => "gzip",
             HttpEncoding::Deflate => "deflate",
             HttpEncoding::Brotli => "brotli",
+            HttpEncoding::Identity => "identity",
         };
         write!(f, "{}", encoding_str)
     }
@@ -96,43 +102,30 @@ impl CompressionMiddleware {
         response: T,
         accept_encoding: Option<&str>,
     ) -> CompressedResponse<T> {
-        let encoding = if let Some(header) = accept_encoding {
-            let encoding_type = HttpEncoding::parse_accept_encoding(header);
-            if !encoding_type.is_empty() {
-                match encoding_type[0].0 {
-                    HttpEncoding::Gzip => "gzip",
-                    HttpEncoding::Deflate => "deflate",
-                    HttpEncoding::Brotli => "br",
-                }
-            } else {
-                "identity" // no acceptable encoding found
-            }
-        } else {
-            "identity" // no Accept-Encoding header, no compression
-        };
-
         let body = match response.body() {
             HttpBody::Text(text) => text.into_bytes(),
             HttpBody::Binary(bin) => bin,
         };
 
+        if body.len() < MINIMUM_BODY_SIZE {
+            return CompressedResponse {
+                original: response,
+                encoding: "identity".to_string(),
+                compressed_body: body,
+            };
+        }
+
+        let encoding = accept_encoding.and_then(|header| {
+            let types = HttpEncoding::parse_accept_encoding(header);
+            types.first().map(|(t, _)| t.clone())
+        })
+            .unwrap_or(HttpEncoding::Identity);
+
         let compressed_body = match encoding {
-            "gzip" => {
-                let mut encoder = libflate::gzip::Encoder::new(Vec::new()).unwrap();
-                std::io::copy(&mut &body[..], &mut encoder).unwrap();
-                encoder.finish().into_result().unwrap()
-            }
-            "deflate" => {
-                let mut encoder = libflate::deflate::Encoder::new(Vec::new());
-                std::io::copy(&mut &body[..], &mut encoder).unwrap();
-                encoder.finish().into_result().unwrap()
-            }
-            "br" | "brotli" => {
-                let mut encoder = brotli::CompressorWriter::new(Vec::new(), 4096, 5, 22);
-                std::io::copy(&mut &body[..], &mut encoder).unwrap();
-                encoder.into_inner()
-            }
-            _ => body, // identity, no compression
+            HttpEncoding::Gzip => Self::compress_gzip(&body),
+            HttpEncoding::Deflate => Self::compress_deflate(&body),
+            HttpEncoding::Brotli => Self::compress_brotli(&body),
+            HttpEncoding::Identity => body,
         };
 
         CompressedResponse {
@@ -140,6 +133,24 @@ impl CompressionMiddleware {
             encoding: encoding.to_string(),
             compressed_body,
         }
+    }
+
+    fn compress_brotli(body: &[u8]) -> Vec<u8> {
+        let mut encoder = brotli::CompressorWriter::new(Vec::new(), 4096, 5, 22);
+        io::copy(&mut &body[..], &mut encoder).unwrap();
+        encoder.into_inner()
+    }
+
+    fn compress_deflate(body: &[u8]) -> Vec<u8> {
+        let mut encoder = libflate::deflate::Encoder::new(Vec::new());
+        io::copy(&mut &body[..], &mut encoder).unwrap();
+        encoder.finish().into_result().unwrap()
+    }
+
+    fn compress_gzip(body: &[u8]) -> Vec<u8> {
+        let mut encoder = libflate::gzip::Encoder::new(Vec::new()).unwrap();
+        io::copy(&mut &body[..], &mut encoder).unwrap();
+        encoder.finish().into_result().unwrap()
     }
 }
 
@@ -450,7 +461,7 @@ pub fn file_handler(
                                 let mime_type = Path::new(filename)
                                     .extension()
                                     .and_then(|ext| ext.to_str())
-                                    .map(|ext| mime_type_from_extension(ext))
+                                    .map(mime_type_from_extension)
                                     .unwrap_or("application/octet-stream");
 
                                 let mut headers = HashMap::new();

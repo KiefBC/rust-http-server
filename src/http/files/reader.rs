@@ -75,7 +75,7 @@ pub fn read_file_with_range(request: FileReadRequest) -> Result<FileReadResult, 
                 .map_err(FileReadError::IoError)?;
             let mut buffer = vec![0; (end - start + 1) as usize];
             file.read_exact(&mut buffer)
-                .map_err(|e| FileReadError::IoError(e))?;
+                .map_err(FileReadError::IoError)?;
 
             Ok(FileReadResult {
                 body: HttpBody::Binary(buffer),

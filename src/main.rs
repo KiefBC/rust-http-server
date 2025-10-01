@@ -1,5 +1,6 @@
 use crate::http::server;
-use std::{env, fs::create_dir_all, net::TcpListener, process, thread};
+use std::{env, fs::create_dir_all, net::TcpListener, process};
+use threadpool::ThreadPool;
 
 mod http;
 
@@ -32,20 +33,37 @@ fn main() {
         }
     };
 
+    let pool = ThreadPool::new(100);
+
     let listener = TcpListener::bind("127.0.0.1:4221").unwrap();
 
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                println!("\nAccepted Connection: {}", stream.peer_addr().unwrap());
+                match stream.peer_addr() {
+                    Ok(addr) => println!("\nAccepted Connection: {}", addr),
+                    Err(_) => println!("\nAccepted Connection: unknown"),
+                }
                 let ctx = context.clone();
-                thread::spawn(move || server::handle_client(stream, ctx));
+                pool.execute(move || {
+                    match server::handle_client(stream, ctx) {
+                        Ok(()) => {
+                            println!("Connection closed");
+                        }
+                        Err(status_code) => {
+                            println!("Connection closed with status code {}", status_code);
+                        }
+                    }
+                });
             }
+
             Err(e) => {
                 println!("error: {}", e);
             }
         }
     }
+
+    pool.join();
 }
 
 /// Parses command line arguments into a vector of strings

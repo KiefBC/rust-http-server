@@ -7,10 +7,27 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
+    time::{Duration}
 };
 
-use crate::http::{errors, request, routes, writer};
+use crate::http::{
+    request::{HttpVersion, HttpRequest},
+    response::{HttpStatusCode},
+    routes,
+    writer,
+    errors::{HttpErrorResponse}
+};
 
+/// Maximum size for HTTP request headers (16KB)
+/// Prevents memory exhaustion from malicious clients sending unbounded data
+const MAX_REQUEST_HEADER_SIZE: usize = 16 * 1024;
+
+/// Timeouts for reading and writing requests and responses
+/// 30 seconds is the default for most web servers, so we follow suit
+const READ_TIMEOUT: Duration = Duration::from_secs(30);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// List of reserved Windows filenames
 const RESERVED_NAMES: &[&str] = &[
     "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
     "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
@@ -298,7 +315,10 @@ fn percent_decode(input: &str) -> Result<String, ()> {
 }
 
 /// Handles incoming client connections
-pub fn handle_client(mut stream: TcpStream, ctx: ServerContext) {
+pub fn handle_client(mut stream: TcpStream, ctx: ServerContext) -> Result<(), HttpStatusCode> {
+    read_timeout(&mut stream);
+    write_timeout(&mut stream);
+    
     loop {
         let req_id = ctx.next_request_id();
         let mut request_bytes: Vec<u8> = Vec::new();
@@ -309,13 +329,44 @@ pub fn handle_client(mut stream: TcpStream, ctx: ServerContext) {
                 Ok(0) => break, // Connection closed
                 Ok(n) => {
                     request_bytes.extend(&buffer[..n]);
+
+                    if request_bytes.len() > MAX_REQUEST_HEADER_SIZE {
+                        let error_response = HttpErrorResponse::new(
+                            HttpStatusCode::BadRequest,
+                            HttpVersion::Http1_1,
+                            "close",
+                            None,
+                            "Request header too large".to_string(),
+                        );
+                        writer::send_response(&mut stream, error_response, req_id).unwrap_or_else(|e| {
+                            println!(
+                                "[request {}] Failed to send error response: {:?}",
+                                req_id, e
+                            );
+                        });
+
+                        return Err(HttpStatusCode::BadRequest);
+                    }
+
                     if request_bytes.windows(4).any(|window| window == b"\r\n\r\n") {
                         break;
                     }
                 }
                 Err(e) => {
-                    println!("Failed to read from stream: {}", e);
-                    return;
+                    let error_response = HttpErrorResponse::new(
+                        HttpStatusCode::InternalServerError,
+                        HttpVersion::Http1_1,
+                        "close",
+                        None,
+                        format!("Failed to read request: {}", e),
+                    );
+                    writer::send_response(&mut stream, error_response, req_id).unwrap_or_else(|e| {
+                        println!(
+                            "[request {}] Failed to send error response: {:?}",
+                            req_id, e
+                        );
+                    });
+                    return Ok(());
                 }
             }
         }
@@ -323,10 +374,10 @@ pub fn handle_client(mut stream: TcpStream, ctx: ServerContext) {
         // If the peer closed the connection without sending bytes, stop gracefully
         if request_bytes.is_empty() {
             println!("[request {}] peer closed connection (no bytes)", req_id);
-            break;
+            return Ok(());
         }
 
-        match request::HttpRequest::parse(&request_bytes) {
+        match HttpRequest::parse(&request_bytes) {
             Ok(parse_ok) => {
                 eprintln!(
                     "[request {}] {} {}",
@@ -346,7 +397,7 @@ pub fn handle_client(mut stream: TcpStream, ctx: ServerContext) {
                     stream.shutdown(Shutdown::Both).unwrap_or_else(|e| {
                         println!("[request {}] Failed to shutdown: {:?}", req_id, e);
                     });
-                    break;
+                    return Ok(())
                 }
             }
             Err(parse_error) => {
@@ -354,7 +405,7 @@ pub fn handle_client(mut stream: TcpStream, ctx: ServerContext) {
                     "[request {}] parse error: {} — sending error response",
                     req_id, parse_error
                 );
-                let error_response = errors::HttpErrorResponse::new(
+                let error_response = HttpErrorResponse::new(
                     parse_error.status,
                     parse_error.version,
                     parse_error
@@ -374,4 +425,18 @@ pub fn handle_client(mut stream: TcpStream, ctx: ServerContext) {
             }
         }
     }
+}
+
+/// Sets the write timeouts for a TCP stream.
+fn write_timeout(stream: &mut TcpStream) {
+    stream.set_write_timeout(Some(WRITE_TIMEOUT)).unwrap_or_else(|e| {
+        eprintln!("Failed to set write timeout: {:?}", e)
+    });
+}
+
+/// Sets the read timeouts for a TCP stream.
+fn read_timeout(stream: &mut TcpStream) {
+    stream.set_read_timeout(Some(READ_TIMEOUT)).unwrap_or_else(|e| {
+        eprintln!("Failed to set read timeout: {:?}", e)
+    });
 }

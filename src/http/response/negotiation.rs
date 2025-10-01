@@ -54,7 +54,7 @@ impl ContentNegotiable for HttpResponse {
         let mime_type = Path::new(filename)
             .extension()
             .and_then(|ext| ext.to_str())
-            .map(|ext| mime_type_from_extension(ext))
+            .map(mime_type_from_extension)
             .unwrap_or("application/octet-stream");
 
         let status_line = ResponseStatusLine {

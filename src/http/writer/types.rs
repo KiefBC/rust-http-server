@@ -28,7 +28,7 @@ impl HttpBody {
     /// Returns the byte length of the body
     pub fn byte_len(&self) -> usize {
         match self {
-            HttpBody::Text(text) => text.as_bytes().len(),
+            HttpBody::Text(text) => text.len(),
             HttpBody::Binary(bytes) => bytes.len(),
         }
     }
