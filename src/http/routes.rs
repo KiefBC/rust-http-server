@@ -1,25 +1,22 @@
 use std::{collections::HashMap, fmt, fs, io, net::TcpStream, path::Path};
 
 use crate::http::{
-    errors::HttpErrorResponse,
     files::{
         mime::mime_type_from_extension,
         reader::read_file_with_range,
         types::{ByteRange, FileReadError, FileReadRequest},
     },
     request::{HttpMethod, HttpRequest},
-    response::{
-        ContentNegotiable, HttpContentType, HttpResponse, HttpStatusCode, ResponseStatusLine,
-    },
+    response::{HttpBody, HttpContentType, HttpResponse, HttpStatusCode, ResponseStatusLine},
     server,
-    writer::{send_response, HttpBody, HttpWritable, HttpWriter},
+    writer::{log_writer_error, send_response, HttpWritable},
 };
 
 /// The minimum body size (in bytes) to consider compression
 const MINIMUM_BODY_SIZE: usize = 1024;
 
 /// Represents supported HTTP Encoding types
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum HttpEncoding {
     Gzip,
     Deflate,
@@ -102,24 +99,20 @@ impl CompressionMiddleware {
         response: T,
         accept_encoding: Option<&str>,
     ) -> CompressedResponse<T> {
-        let body = match response.body() {
-            HttpBody::Text(text) => text.into_bytes(),
-            HttpBody::Binary(bin) => bin,
+        let body = response
+            .body()
+            .map_or_else(Vec::new, |body| body.as_bytes().to_vec());
+
+        let encoding = if body.len() < MINIMUM_BODY_SIZE {
+            HttpEncoding::Identity
+        } else {
+            accept_encoding
+                .and_then(|header| {
+                    let types = HttpEncoding::parse_accept_encoding(header);
+                    types.first().map(|(encoding, _)| *encoding)
+                })
+                .unwrap_or(HttpEncoding::Identity)
         };
-
-        if body.len() < MINIMUM_BODY_SIZE {
-            return CompressedResponse {
-                original: response,
-                encoding: "identity".to_string(),
-                compressed_body: body,
-            };
-        }
-
-        let encoding = accept_encoding.and_then(|header| {
-            let types = HttpEncoding::parse_accept_encoding(header);
-            types.first().map(|(t, _)| t.clone())
-        })
-            .unwrap_or(HttpEncoding::Identity);
 
         let compressed_body = match encoding {
             HttpEncoding::Gzip => Self::compress_gzip(&body),
@@ -128,10 +121,21 @@ impl CompressionMiddleware {
             HttpEncoding::Identity => body,
         };
 
+        let mut headers = response.headers().clone();
+        remove_header_ci(&mut headers, "Content-Length");
+        remove_header_ci(&mut headers, "Content-Encoding");
+        if !matches!(encoding, HttpEncoding::Identity) {
+            headers.insert("Content-Encoding".to_string(), encoding.to_string());
+        }
+        headers.insert(
+            "Content-Length".to_string(),
+            compressed_body.len().to_string(),
+        );
+
         CompressedResponse {
             original: response,
-            encoding: encoding.to_string(),
-            compressed_body,
+            headers,
+            body: HttpBody::Binary(compressed_body),
         }
     }
 
@@ -157,8 +161,8 @@ impl CompressionMiddleware {
 /// Represents a response with applied compression
 pub struct CompressedResponse<T: HttpWritable> {
     original: T,
-    encoding: String,
-    compressed_body: Vec<u8>,
+    headers: HashMap<String, String>,
+    body: HttpBody,
 }
 
 impl<T: HttpWritable> HttpWritable for CompressedResponse<T> {
@@ -168,25 +172,18 @@ impl<T: HttpWritable> HttpWritable for CompressedResponse<T> {
     }
 
     // Returns modified headers with Content-Encoding and updated Content-Length
-    fn headers(&self) -> HashMap<String, String> {
-        let mut headers = self.original.headers().clone();
-        headers.remove("Content-Length");
-
-        if self.encoding != "identity" {
-            headers.insert("Content-Encoding".to_string(), self.encoding.clone());
-        }
-        headers.insert(
-            "Content-Length".to_string(),
-            self.compressed_body.len().to_string(),
-        );
-
-        headers
+    fn headers(&self) -> &HashMap<String, String> {
+        &self.headers
     }
 
     // Returns compressed body
-    fn body(&self) -> HttpBody {
-        HttpBody::Binary(self.compressed_body.clone())
+    fn body(&self) -> Option<&HttpBody> {
+        Some(&self.body)
     }
+}
+
+fn remove_header_ci(headers: &mut HashMap<String, String>, name: &str) {
+    headers.retain(|key, _| !key.eq_ignore_ascii_case(name));
 }
 
 /// Represents a single route
@@ -300,16 +297,16 @@ impl Router {
 
         let accept_header = request.headers.get("Accept").map(|s| s.as_str());
 
-        let err_response = HttpErrorResponse::new(
+        let err_response = HttpResponse::error(
             HttpStatusCode::NotFound,
-            request.status_line.version.clone(),
+            request.status_line.version,
             request.headers.get("Connection").map_or("", |s| s.as_str()),
             accept_header,
             "Route not found".to_string(),
         );
 
         send_response(stream, err_response, req_id).unwrap_or_else(|e| {
-            HttpWriter::log_writer_error(e, "Router::route - sending 404 response");
+            log_writer_error(e, "Router::route - sending 404 response");
         });
     }
 }
@@ -329,7 +326,7 @@ pub fn root_handler(
 
     let response = HttpResponse::with_negotiation(
         HttpStatusCode::Ok,
-        request.status_line.version.clone(),
+        request.status_line.version,
         request.headers.get("Connection").map_or("", |s| s.as_str()),
         body,
         accept_type,
@@ -338,7 +335,7 @@ pub fn root_handler(
     );
 
     send_response(stream, response, req_id).unwrap_or_else(|e| {
-        HttpWriter::log_writer_error(e, "root_handler");
+        log_writer_error(e, "root_handler");
     });
 }
 
@@ -352,7 +349,7 @@ pub fn chunked_handler(
 ) {
     eprintln!("[request {}][chunked] params={:?}", req_id, params);
     let status_line = ResponseStatusLine {
-        version: request.status_line.version.clone(),
+        version: request.status_line.version,
         status: HttpStatusCode::Ok,
     };
 
@@ -372,7 +369,7 @@ pub fn chunked_handler(
     let response = HttpResponse::new(status_line, chunked_headers, Some(HttpBody::Binary(body)));
 
     send_response(stream, response, req_id).unwrap_or_else(|e| {
-        HttpWriter::log_writer_error(e, "chunked_handler");
+        log_writer_error(e, "chunked_handler");
     });
 }
 
@@ -395,7 +392,7 @@ pub fn echo_handler(
 
     let response = HttpResponse::with_negotiation(
         HttpStatusCode::Ok,
-        request.status_line.version.clone(),
+        request.status_line.version,
         request.headers.get("Connection").map_or("", |s| s.as_str()),
         body,
         accept_type,
@@ -408,7 +405,7 @@ pub fn echo_handler(
     let compressed_response = CompressionMiddleware::apply(response, accept_encoding);
 
     send_response(stream, compressed_response, req_id).unwrap_or_else(|e| {
-        HttpWriter::log_writer_error(e, "echo_handler");
+        log_writer_error(e, "echo_handler");
     });
 }
 
@@ -433,125 +430,110 @@ pub fn file_handler(
         .unwrap_or("");
 
     match request.status_line.method {
-        HttpMethod::Get => {
-            match ctx.resolve_path(filename, server::AccessIntent::Read, req_id) {
-                Ok(resolved) => {
-                    let range_header = request.headers.get("Range");
+        HttpMethod::Get => match ctx.resolve_path(filename, server::AccessIntent::Read, req_id) {
+            Ok(resolved) => {
+                let range_header = request.headers.get("Range");
 
-                    let read_request = if let Some(range_str) = range_header {
-                        if let Some(range) = ByteRange::from_header(range_str) {
-                            FileReadRequest::Range(resolved.path().to_path_buf(), range)
-                        } else {
-                            FileReadRequest::Full(resolved.path().to_path_buf())
-                        }
+                let read_request = if let Some(range_str) = range_header {
+                    if let Some(range) = ByteRange::from_header(range_str) {
+                        FileReadRequest::Range(resolved.path().to_path_buf(), range)
                     } else {
                         FileReadRequest::Full(resolved.path().to_path_buf())
-                    };
+                    }
+                } else {
+                    FileReadRequest::Full(resolved.path().to_path_buf())
+                };
 
-                    let read_result = read_file_with_range(read_request);
+                let read_result = read_file_with_range(read_request);
 
-                    match read_result {
-                        Ok(file_result) => {
-                            if let Some((start, end)) = file_result.range {
-                                let status_line = ResponseStatusLine {
-                                    version: request.status_line.version.clone(),
-                                    status: HttpStatusCode::PartialContent,
-                                };
-
-                                let mime_type = Path::new(filename)
-                                    .extension()
-                                    .and_then(|ext| ext.to_str())
-                                    .map(mime_type_from_extension)
-                                    .unwrap_or("application/octet-stream");
-
-                                let mut headers = HashMap::new();
-                                headers.insert("Content-Type".to_string(), mime_type.to_string());
-                                headers.insert(
-                                    "Content-Length".to_string(),
-                                    file_result.body.byte_len().to_string(),
-                                );
-                                headers.insert(
-                                    "Content-Range".to_string(),
-                                    format!("bytes {}-{}/{}", start, end, file_result.total_size),
-                                );
-                                headers.insert("Connection".to_string(), conn.to_string());
-
-                                let response =
-                                    HttpResponse::new(status_line, headers, Some(file_result.body));
-
-                                send_response(stream, response, req_id).unwrap_or_else(|e| {
-                                    HttpWriter::log_writer_error(
-                                        e,
-                                        "file_handler - sending range content",
-                                    );
-                                });
-                            } else {
-                                let response = HttpResponse::for_file(
-                                    HttpStatusCode::Ok,
-                                    request.status_line.version.clone(),
-                                    conn,
-                                    filename,
-                                    file_result.body,
-                                );
-
-                                send_response(stream, response, req_id).unwrap_or_else(|e| {
-                                    HttpWriter::log_writer_error(
-                                        e,
-                                        "file_handler - sending file content",
-                                    );
-                                });
-                            }
-                        }
-                        Err(err) => {
-                            let status = match err {
-                                FileReadError::NotFound(_) => HttpStatusCode::NotFound,
-                                FileReadError::IoError(_) => HttpStatusCode::InternalServerError,
-                                FileReadError::InvalidRange => HttpStatusCode::BadRequest,
-                                _ => HttpStatusCode::InternalServerError,
+                match read_result {
+                    Ok(file_result) => {
+                        if let Some((start, end)) = file_result.range {
+                            let status_line = ResponseStatusLine {
+                                version: request.status_line.version,
+                                status: HttpStatusCode::PartialContent,
                             };
 
-                            let err_response = HttpErrorResponse::for_file_error(
-                                status,
-                                request.status_line.version.clone(),
+                            let mime_type = Path::new(filename)
+                                .extension()
+                                .and_then(|ext| ext.to_str())
+                                .map(mime_type_from_extension)
+                                .unwrap_or("application/octet-stream");
+
+                            let mut headers = HashMap::new();
+                            headers.insert("Content-Type".to_string(), mime_type.to_string());
+                            headers.insert(
+                                "Content-Length".to_string(),
+                                file_result.body.byte_len().to_string(),
+                            );
+                            headers.insert(
+                                "Content-Range".to_string(),
+                                format!("bytes {}-{}/{}", start, end, file_result.total_size),
+                            );
+                            headers.insert("Connection".to_string(), conn.to_string());
+
+                            let response =
+                                HttpResponse::new(status_line, headers, Some(file_result.body));
+
+                            send_response(stream, response, req_id).unwrap_or_else(|e| {
+                                log_writer_error(e, "file_handler - sending range content");
+                            });
+                        } else {
+                            let response = HttpResponse::for_file(
+                                HttpStatusCode::Ok,
+                                request.status_line.version,
                                 conn,
                                 filename,
-                                "Reading file content failed".to_string(),
+                                file_result.body,
                             );
 
-                            send_response(stream, err_response, req_id).unwrap_or_else(|e| {
-                                HttpWriter::log_writer_error(
-                                    e,
-                                    "file_handler - sending error response",
-                                );
+                            send_response(stream, response, req_id).unwrap_or_else(|e| {
+                                log_writer_error(e, "file_handler - sending file content");
                             });
                         }
                     }
-                }
-                Err(err) => {
-                    let status = match err {
-                        server::ResolveError::Forbidden => HttpStatusCode::Forbidden,
-                        server::ResolveError::NotFound => HttpStatusCode::NotFound,
-                        server::ResolveError::Invalid => HttpStatusCode::NotFound,
-                        server::ResolveError::Io => HttpStatusCode::InternalServerError,
-                    };
+                    Err(err) => {
+                        let status = match err {
+                            FileReadError::NotFound(_) => HttpStatusCode::NotFound,
+                            FileReadError::IoError(_) => HttpStatusCode::InternalServerError,
+                            FileReadError::InvalidRange => HttpStatusCode::BadRequest,
+                        };
 
-                    let err_response = HttpErrorResponse::for_file_error(
-                        status,
-                        request.status_line.version.clone(),
-                        conn,
-                        filename,
-                        "File resolution failed".to_string(),
-                    );
-
-                    send_response(stream, err_response, req_id).unwrap_or_else(|e| {
-                        HttpWriter::log_writer_error(
-                            e,
-                            "file_handler - sending error response (GET)",
+                        let err_response = HttpResponse::for_file_error(
+                            status,
+                            request.status_line.version,
+                            conn,
+                            filename,
+                            "Reading file content failed".to_string(),
                         );
-                    });
+
+                        send_response(stream, err_response, req_id).unwrap_or_else(|e| {
+                            log_writer_error(e, "file_handler - sending error response");
+                        });
+                    }
                 }
             }
-        }
+            Err(err) => {
+                let status = match err {
+                    server::ResolveError::Forbidden => HttpStatusCode::Forbidden,
+                    server::ResolveError::NotFound => HttpStatusCode::NotFound,
+                    server::ResolveError::Invalid => HttpStatusCode::NotFound,
+                    server::ResolveError::Io => HttpStatusCode::InternalServerError,
+                };
+
+                let err_response = HttpResponse::for_file_error(
+                    status,
+                    request.status_line.version,
+                    conn,
+                    filename,
+                    "File resolution failed".to_string(),
+                );
+
+                send_response(stream, err_response, req_id).unwrap_or_else(|e| {
+                    log_writer_error(e, "file_handler - sending error response (GET)");
+                });
+            }
+        },
         HttpMethod::Post => {
             let content = request.body.as_ref().map_or("", |b| b.as_str());
 
@@ -566,33 +548,27 @@ pub fn file_handler(
 
                         let response = HttpResponse::for_file_error(
                             status,
-                            request.status_line.version.clone(),
+                            request.status_line.version,
                             conn,
                             filename,
                             format!("File '{}' created/updated", filename),
                         );
 
                         send_response(stream, response, req_id).unwrap_or_else(|e| {
-                            HttpWriter::log_writer_error(
-                                e,
-                                "file_handler - sending success response (POST)",
-                            );
+                            log_writer_error(e, "file_handler - sending success response (POST)");
                         });
                     }
                     Err(e) => {
-                        let err_response = HttpErrorResponse::for_file_error(
+                        let err_response = HttpResponse::for_file_error(
                             HttpStatusCode::InternalServerError,
-                            request.status_line.version.clone(),
+                            request.status_line.version,
                             conn,
                             filename,
                             format!("Failed to write file '{}': {}", filename, e),
                         );
 
                         send_response(stream, err_response, req_id).unwrap_or_else(|e| {
-                            HttpWriter::log_writer_error(
-                                e,
-                                "file_handler - sending 500 response (write)",
-                            );
+                            log_writer_error(e, "file_handler - sending 500 response (write)");
                         });
                     }
                 },
@@ -604,34 +580,31 @@ pub fn file_handler(
                         server::ResolveError::Io => HttpStatusCode::InternalServerError,
                     };
 
-                    let err_response = HttpErrorResponse::for_file_error(
+                    let err_response = HttpResponse::for_file_error(
                         status,
-                        request.status_line.version.clone(),
+                        request.status_line.version,
                         conn,
                         filename,
                         "File resolution failed".to_string(),
                     );
 
                     send_response(stream, err_response, req_id).unwrap_or_else(|e| {
-                        HttpWriter::log_writer_error(
-                            e,
-                            "file_handler - sending error response (POST)",
-                        );
+                        log_writer_error(e, "file_handler - sending error response (POST)");
                     });
                 }
             }
         }
         _ => {
-            let err_response = HttpErrorResponse::new(
+            let err_response = HttpResponse::error(
                 HttpStatusCode::MethodNotAllowed,
-                request.status_line.version.clone(),
+                request.status_line.version,
                 request.headers.get("Connection").map_or("", |s| s.as_str()),
                 None,
                 "Method not allowed".to_string(),
             );
 
             send_response(stream, err_response, req_id).unwrap_or_else(|e| {
-                HttpWriter::log_writer_error(e, "file_handler - sending 405 response");
+                log_writer_error(e, "file_handler - sending 405 response");
             });
         }
     }
@@ -658,7 +631,7 @@ pub fn user_agent_handler(
 
     let response = HttpResponse::with_negotiation(
         HttpStatusCode::Ok,
-        request.status_line.version.clone(),
+        request.status_line.version,
         request.headers.get("Connection").map_or("", |s| s.as_str()),
         body,
         accept_type,
@@ -667,6 +640,6 @@ pub fn user_agent_handler(
     );
 
     send_response(stream, response, req_id).unwrap_or_else(|e| {
-        HttpWriter::log_writer_error(e, "user_agent_handler");
+        log_writer_error(e, "user_agent_handler");
     });
 }

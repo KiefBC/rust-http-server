@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::http::response::HttpStatusCode;
 use super::types::HttpVersion;
+use crate::http::response::HttpStatusCode;
 
 /// Represents an error that occurred while parsing an HTTP request
 #[derive(Debug, Clone, PartialEq)]

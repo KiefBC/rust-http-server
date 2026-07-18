@@ -1,7 +1,7 @@
 use std::fmt;
 
 /// Represents HTTP methods
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpMethod {
     Get,
     Post,
@@ -21,7 +21,7 @@ impl fmt::Display for HttpMethod {
 }
 
 /// HTTP protocol versions
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpVersion {
     Http1_0,
     Http1_1,

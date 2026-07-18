@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::http::response::HttpStatusCode;
 use super::errors::ParseError;
 use super::types::{HttpMethod, HttpVersion, RequestStatusLine};
+use crate::http::response::HttpStatusCode;
 
 /// Represents an HTTP request
 #[derive(Debug, Clone)]
@@ -116,12 +116,10 @@ impl HttpRequest {
             }
         };
 
-        let path = request_line[1].to_string();
-
         let status_line = RequestStatusLine {
-            method: method.clone(),
-            path: path.clone(),
-            version: parsed_version.clone(),
+            method,
+            path: request_line[1].to_string(),
+            version: parsed_version,
         };
 
         let content_length = headers
@@ -166,7 +164,7 @@ mod tests {
 
         assert_eq!(request.status_line.method, HttpMethod::Get);
         assert_eq!(request.status_line.path, "/");
-        assert_eq!(request.status_line.version, HttpVersion::Http1_0);
+        assert_eq!(request.status_line.version, HttpVersion::Http1_1);
         assert_eq!(request.headers.get("Host").unwrap(), "localhost");
         assert_eq!(request.headers.get("User-Agent").unwrap(), "curl/7.64.1");
         assert_eq!(request.headers.get("Accept").unwrap(), "*/*");
@@ -249,7 +247,7 @@ mod tests {
 
         assert_eq!(request.status_line.method, HttpMethod::Get);
         assert_eq!(request.status_line.path, "/");
-        assert_eq!(request.status_line.version, HttpVersion::Http1_0);
+        assert_eq!(request.status_line.version, HttpVersion::Http1_1);
         assert!(request.headers.is_empty());
     }
 
@@ -285,7 +283,7 @@ mod tests {
         let status_line = RequestStatusLine {
             method: HttpMethod::Get,
             path: "/".to_string(),
-            version: HttpVersion::Http1_0,
+            version: HttpVersion::Http1_1,
         };
 
         let request = HttpRequest {
@@ -307,7 +305,7 @@ mod tests {
         let status_line = RequestStatusLine {
             method: HttpMethod::Get,
             path: "/".to_string(),
-            version: HttpVersion::Http1_0,
+            version: HttpVersion::Http1_1,
         };
 
         let request = HttpRequest {

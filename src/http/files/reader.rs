@@ -2,7 +2,7 @@ use super::{
     mime::is_text_extension,
     types::{FileReadError, FileReadRequest, FileReadResult},
 };
-use crate::http::writer::HttpBody;
+use crate::http::response::HttpBody;
 use std::{
     fs::{self, File},
     io::{Read, Seek, SeekFrom},
@@ -48,7 +48,7 @@ pub fn read_file_with_range(request: FileReadRequest) -> Result<FileReadResult, 
             let file_reader = FullFileReader { path };
             let body = file_reader.read()?;
             let total_size = body.byte_len() as u64;
-            
+
             Ok(FileReadResult {
                 body,
                 total_size,
