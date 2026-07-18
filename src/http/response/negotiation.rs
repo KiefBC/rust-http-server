@@ -2,52 +2,16 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use super::builder::HttpResponse;
-use super::types::{HttpContentType, HttpStatusCode, ResponseStatusLine};
+use super::types::{HttpBody, HttpContentType, HttpStatusCode, ResponseStatusLine};
 use crate::http::files::mime::mime_type_from_extension;
 use crate::http::request::HttpVersion;
-use crate::http::writer::types::HttpBody;
 
-/// Trait for content negotiation.
-pub trait ContentNegotiable {
+impl HttpResponse {
     /// Negotiates on a per-file basis
-    fn for_file(
+    pub fn for_file(
         status: HttpStatusCode,
         version: HttpVersion,
         connection_header: &str,
-        filename: &str,
-        content: HttpBody,
-    ) -> Self
-    where
-        Self: Sized;
-
-    /// Negotiates on a per-file basis for errors
-    fn for_file_error(
-        status: HttpStatusCode,
-        version: HttpVersion,
-        connection_header: &str,
-        filename: &str,
-        content: String,
-    ) -> Self
-    where
-        Self: Sized;
-
-    /// Constructs a new HTTP response with content negotiation support.
-    fn with_negotiation(
-        status_code: HttpStatusCode,
-        version: HttpVersion,
-        connection_header: &str,
-        content: String,
-        accept_header: Option<&str>,
-        chunked: Option<bool>,
-        mime_type: &str,
-    ) -> Self;
-}
-
-impl ContentNegotiable for HttpResponse {
-    fn for_file(
-        status: HttpStatusCode,
-        version: HttpVersion,
-        _connection_header: &str,
         filename: &str,
         content: HttpBody,
     ) -> Self {
@@ -57,14 +21,12 @@ impl ContentNegotiable for HttpResponse {
             .map(mime_type_from_extension)
             .unwrap_or("application/octet-stream");
 
-        let status_line = ResponseStatusLine {
-            version,
-            status: status.clone(),
-        };
+        let status_line = ResponseStatusLine { version, status };
 
         let headers = HashMap::from([
             ("Content-Type".to_string(), mime_type.to_string()),
             ("Content-Length".to_string(), content.byte_len().to_string()),
+            ("Connection".to_string(), connection_header.to_string()),
         ]);
 
         let body = match content {
@@ -75,32 +37,25 @@ impl ContentNegotiable for HttpResponse {
         HttpResponse::new(status_line, headers, Some(HttpBody::Binary(body)))
     }
 
-    fn for_file_error(
+    /// Creates a plain-text error response for a file operation.
+    pub fn for_file_error(
         status: HttpStatusCode,
         version: HttpVersion,
-        _connection_header: &str,
+        connection_header: &str,
         _filename: &str,
         content: String,
     ) -> Self {
-        let content_type = "text/plain";
-
-        let status_line = ResponseStatusLine {
+        Self::error(
+            status,
             version,
-            status: status.clone(),
-        };
-
-        let body = HttpBody::Text(content);
-
-        let headers = HashMap::from([
-            ("Content-Type".to_string(), content_type.to_string()),
-            ("Content-Length".to_string(), body.byte_len().to_string()),
-            ("Connection".to_string(), "close".to_string()),
-        ]);
-
-        HttpResponse::new(status_line, headers, Some(body))
+            connection_header,
+            Some("text/plain"),
+            content,
+        )
     }
 
-    fn with_negotiation(
+    /// Constructs a response using the requested representation and framing.
+    pub fn with_negotiation(
         status_code: HttpStatusCode,
         version: HttpVersion,
         connection_header: &str,
@@ -121,8 +76,7 @@ impl ContentNegotiable for HttpResponse {
             ))),
             HttpContentType::Json => Some(HttpBody::Text(format!(
                 r#"{{"message": "{}", "code": {}}}"#,
-                content,
-                status_code.clone() as u16
+                content, status_code as u16
             ))),
             HttpContentType::PlainText => Some(HttpBody::Text(content)),
             HttpContentType::OctetStream => None,

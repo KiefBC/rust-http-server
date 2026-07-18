@@ -7,15 +7,13 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
-    time::{Duration}
+    time::Duration,
 };
 
 use crate::http::{
-    request::{HttpVersion, HttpRequest},
-    response::{HttpStatusCode},
-    routes,
-    writer,
-    errors::{HttpErrorResponse}
+    request::{HttpRequest, HttpVersion},
+    response::{HttpResponse, HttpStatusCode},
+    routes, writer,
 };
 
 /// Maximum size for HTTP request headers (16KB)
@@ -154,12 +152,10 @@ impl ServerContext {
         }
 
         let path_obj = PathBuf::from(&decoded);
-        if path_obj.components().any(|comp| {
-            matches!(
-                comp,
-                path::Component::RootDir | path::Component::Prefix(_)
-            )
-        }) {
+        if path_obj
+            .components()
+            .any(|comp| matches!(comp, path::Component::RootDir | path::Component::Prefix(_)))
+        {
             eprintln!(
                 "[request {}][resolve_path] forbidden: absolute or drive-prefixed path",
                 req_id
@@ -167,12 +163,10 @@ impl ServerContext {
             return Err(ResolveError::Forbidden);
         }
 
-        if path_obj.components().any(|c| {
-            matches!(
-                c,
-                path::Component::CurDir | path::Component::ParentDir
-            )
-        }) {
+        if path_obj
+            .components()
+            .any(|c| matches!(c, path::Component::CurDir | path::Component::ParentDir))
+        {
             eprintln!(
                 "[request {}][resolve_path] forbidden: contains . or .. segments",
                 req_id
@@ -318,7 +312,7 @@ fn percent_decode(input: &str) -> Result<String, ()> {
 pub fn handle_client(mut stream: TcpStream, ctx: ServerContext) -> Result<(), HttpStatusCode> {
     read_timeout(&mut stream);
     write_timeout(&mut stream);
-    
+
     loop {
         let req_id = ctx.next_request_id();
         let mut request_bytes: Vec<u8> = Vec::new();
@@ -331,19 +325,21 @@ pub fn handle_client(mut stream: TcpStream, ctx: ServerContext) -> Result<(), Ht
                     request_bytes.extend(&buffer[..n]);
 
                     if request_bytes.len() > MAX_REQUEST_HEADER_SIZE {
-                        let error_response = HttpErrorResponse::new(
+                        let error_response = HttpResponse::error(
                             HttpStatusCode::BadRequest,
                             HttpVersion::Http1_1,
                             "close",
                             None,
                             "Request header too large".to_string(),
                         );
-                        writer::send_response(&mut stream, error_response, req_id).unwrap_or_else(|e| {
-                            println!(
-                                "[request {}] Failed to send error response: {:?}",
-                                req_id, e
-                            );
-                        });
+                        writer::send_response(&mut stream, error_response, req_id).unwrap_or_else(
+                            |e| {
+                                println!(
+                                    "[request {}] Failed to send error response: {:?}",
+                                    req_id, e
+                                );
+                            },
+                        );
 
                         return Err(HttpStatusCode::BadRequest);
                     }
@@ -353,19 +349,21 @@ pub fn handle_client(mut stream: TcpStream, ctx: ServerContext) -> Result<(), Ht
                     }
                 }
                 Err(e) => {
-                    let error_response = HttpErrorResponse::new(
+                    let error_response = HttpResponse::error(
                         HttpStatusCode::InternalServerError,
                         HttpVersion::Http1_1,
                         "close",
                         None,
                         format!("Failed to read request: {}", e),
                     );
-                    writer::send_response(&mut stream, error_response, req_id).unwrap_or_else(|e| {
-                        println!(
-                            "[request {}] Failed to send error response: {:?}",
-                            req_id, e
-                        );
-                    });
+                    writer::send_response(&mut stream, error_response, req_id).unwrap_or_else(
+                        |e| {
+                            println!(
+                                "[request {}] Failed to send error response: {:?}",
+                                req_id, e
+                            );
+                        },
+                    );
                     return Ok(());
                 }
             }
@@ -397,7 +395,7 @@ pub fn handle_client(mut stream: TcpStream, ctx: ServerContext) -> Result<(), Ht
                     stream.shutdown(Shutdown::Both).unwrap_or_else(|e| {
                         println!("[request {}] Failed to shutdown: {:?}", req_id, e);
                     });
-                    return Ok(())
+                    return Ok(());
                 }
             }
             Err(parse_error) => {
@@ -405,7 +403,7 @@ pub fn handle_client(mut stream: TcpStream, ctx: ServerContext) -> Result<(), Ht
                     "[request {}] parse error: {} — sending error response",
                     req_id, parse_error
                 );
-                let error_response = HttpErrorResponse::new(
+                let error_response = HttpResponse::error(
                     parse_error.status,
                     parse_error.version,
                     parse_error
@@ -429,14 +427,14 @@ pub fn handle_client(mut stream: TcpStream, ctx: ServerContext) -> Result<(), Ht
 
 /// Sets the write timeouts for a TCP stream.
 fn write_timeout(stream: &mut TcpStream) {
-    stream.set_write_timeout(Some(WRITE_TIMEOUT)).unwrap_or_else(|e| {
-        eprintln!("Failed to set write timeout: {:?}", e)
-    });
+    stream
+        .set_write_timeout(Some(WRITE_TIMEOUT))
+        .unwrap_or_else(|e| eprintln!("Failed to set write timeout: {:?}", e));
 }
 
 /// Sets the read timeouts for a TCP stream.
 fn read_timeout(stream: &mut TcpStream) {
-    stream.set_read_timeout(Some(READ_TIMEOUT)).unwrap_or_else(|e| {
-        eprintln!("Failed to set read timeout: {:?}", e)
-    });
+    stream
+        .set_read_timeout(Some(READ_TIMEOUT))
+        .unwrap_or_else(|e| eprintln!("Failed to set read timeout: {:?}", e));
 }

@@ -1,5 +1,4 @@
-#![allow(dead_code)]
-use std::{io, path};
+use std::{fmt, io, path};
 
 /// Represents a byte range for partial file reads
 #[derive(Debug, Clone)]
@@ -39,7 +38,7 @@ pub enum FileReadRequest {
 
 /// Represents the result of a file read with metadata
 pub struct FileReadResult {
-    pub body: crate::http::writer::HttpBody,
+    pub body: crate::http::response::HttpBody,
     pub total_size: u64,
     pub range: Option<(u64, u64)>, // (start, end) if this was a range request
 }
@@ -48,8 +47,25 @@ pub struct FileReadResult {
 #[derive(Debug)]
 pub enum FileReadError {
     NotFound(io::Error), // Missing files
-    PermissionDenied,    // Access issues
-    RangeNotImplemented, // Not implemented yet
     IoError(io::Error),  // Unexpected I/O errors
     InvalidRange,        // Range exceeds file size
+}
+
+impl fmt::Display for FileReadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound(error) => write!(f, "file not found: {error}"),
+            Self::IoError(error) => write!(f, "file I/O failed: {error}"),
+            Self::InvalidRange => f.write_str("requested byte range is invalid"),
+        }
+    }
+}
+
+impl std::error::Error for FileReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::NotFound(error) | Self::IoError(error) => Some(error),
+            Self::InvalidRange => None,
+        }
+    }
 }

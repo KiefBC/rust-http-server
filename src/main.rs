@@ -45,14 +45,12 @@ fn main() {
                     Err(_) => println!("\nAccepted Connection: unknown"),
                 }
                 let ctx = context.clone();
-                pool.execute(move || {
-                    match server::handle_client(stream, ctx) {
-                        Ok(()) => {
-                            println!("Connection closed");
-                        }
-                        Err(status_code) => {
-                            println!("Connection closed with status code {}", status_code);
-                        }
+                pool.execute(move || match server::handle_client(stream, ctx) {
+                    Ok(()) => {
+                        println!("Connection closed");
+                    }
+                    Err(status_code) => {
+                        println!("Connection closed with status code {}", status_code);
                     }
                 });
             }

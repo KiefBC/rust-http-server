@@ -1,9 +1,43 @@
-#![allow(dead_code)]
 use std::fmt;
 
 use crate::http::request::HttpVersion;
 
+/// A textual or binary HTTP response body.
+#[derive(Debug, Clone)]
+pub enum HttpBody {
+    Text(String),
+    Binary(Vec<u8>),
+}
+
+impl HttpBody {
+    /// Returns the encoded byte length of the body.
+    pub fn byte_len(&self) -> usize {
+        match self {
+            Self::Text(text) => text.len(),
+            Self::Binary(bytes) => bytes.len(),
+        }
+    }
+
+    /// Returns the body as bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Text(text) => text.as_bytes(),
+            Self::Binary(bytes) => bytes,
+        }
+    }
+}
+
+impl fmt::Display for HttpBody {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Text(content) => f.write_str(content),
+            Self::Binary(content) => write!(f, "{content:?}"),
+        }
+    }
+}
+
 /// Represents common HTTP content types
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpContentType {
     Html,
     Json,
@@ -36,18 +70,16 @@ impl fmt::Display for HttpContentType {
 }
 
 /// HTTP response status codes
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpStatusCode {
     Ok = 200,
     Created = 201,
-    NoContent = 204,
     PartialContent = 206,
     BadRequest = 400,
     Forbidden = 403,
     NotFound = 404,
     MethodNotAllowed = 405,
     InternalServerError = 500,
-    NotImplemented = 501,
 }
 
 /// Formats HttpStatus for display
@@ -59,11 +91,9 @@ impl fmt::Display for HttpStatusCode {
             HttpStatusCode::BadRequest => write!(f, "400 Bad Request"),
             HttpStatusCode::MethodNotAllowed => write!(f, "405 Method Not Allowed"),
             HttpStatusCode::Created => write!(f, "201 Created"),
-            HttpStatusCode::NoContent => write!(f, "204 No Content"),
             HttpStatusCode::PartialContent => write!(f, "206 Partial Content"),
             HttpStatusCode::InternalServerError => write!(f, "500 Internal Server Error"),
             HttpStatusCode::Forbidden => write!(f, "403 Forbidden"),
-            HttpStatusCode::NotImplemented => write!(f, "501 Not Implemented"),
         }
     }
 }
